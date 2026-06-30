@@ -201,7 +201,7 @@ Commands available in Telegram: `/start`, `/clear`
 
 ## Supported Providers
 
-OpenRouter · Novita · Kilo Code · OpenCode · OpenAI · Anthropic · Gemini · xAI · DeepSeek · Mistral · Groq · Perplexity · Cohere · Together AI · Fireworks · NVIDIA · Hugging Face · GitHub Copilot · Arcee · GMI · Azure AI Foundry · Alibaba (Qwen) · Kimi · MiniMax · StepFun · Z.AI (GLM) · Xiaomi MiMo · Tencent TokenHub · Ollama · LM Studio
+OpenRouter · NousResearch · Novita · Kilo Code · OpenCode · OpenAI · Anthropic · Gemini · xAI · DeepSeek · Mistral · Groq · Perplexity · Cohere · Together AI · Fireworks · NVIDIA · Hugging Face · GitHub Copilot · Arcee · GMI · Azure AI Foundry · Alibaba (Qwen) · Kimi · MiniMax · StepFun · Z.AI (GLM) · Xiaomi MiMo · Tencent TokenHub · Ollama · LM Studio
 
 ---
 

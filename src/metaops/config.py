@@ -6,8 +6,9 @@ load_dotenv()
 
 # Sensible default model per provider — used when METAOPS_*_MODEL is not explicitly set
 _PROVIDER_DEFAULT_MODELS: dict[str, str] = {
-    "openrouter":  "openai/gpt-4o",
-    "novita":      "meta-llama/llama-3.1-70b-instruct",
+    "openrouter":     "openai/gpt-4o",
+    "nousresearch":   "NousResearch/Hermes-3-Llama-3.1-70B",
+    "novita":         "meta-llama/llama-3.1-70b-instruct",
     "kilocode":    "anthropic/claude-sonnet-4-6",
     "opencode":    "openai/gpt-4o",
     "openai":      "gpt-4o",
@@ -41,8 +42,9 @@ _PROVIDER_DEFAULT_MODELS: dict[str, str] = {
 # Provider registry: name -> (api_key_env | tuple[str,...], base_url_env, default_base_url)
 _PROVIDER_DEFAULTS = {
     # Aggregators
-    "openrouter":  ("OPENROUTER_API_KEY",              "OPENROUTER_BASE_URL",          "https://openrouter.ai/api/v1"),
-    "novita":      ("NOVITA_API_KEY",                  "NOVITA_BASE_URL",              "https://api.novita.ai/v1"),
+    "openrouter":     ("OPENROUTER_API_KEY",            "OPENROUTER_BASE_URL",          "https://openrouter.ai/api/v1"),
+    "nousresearch":   ("NOUSRESEARCH_API_KEY",          "NOUSRESEARCH_BASE_URL",        "https://inference-api.nousresearch.com/v1"),
+    "novita":         ("NOVITA_API_KEY",                "NOVITA_BASE_URL",              "https://api.novita.ai/v1"),
     "kilocode":    ("KILOCODE_API_KEY",                "KILOCODE_BASE_URL",            "https://api.kilo.ai/api/gateway"),
     "opencode":    ("OPENCODE_ZEN_API_KEY",            "OPENCODE_ZEN_BASE_URL",        "https://opencode.ai/zen/v1"),
     # Cloud providers
