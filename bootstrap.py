@@ -85,6 +85,54 @@ if not git:
         )
 ok(f"git: {git}")
 
+# Node.js / npx  (required for MCP servers)
+npx = shutil.which("npx")
+if not npx:
+    info("npx not found — installing Node.js...")
+    installed_node = False
+    if sys.platform == "win32":
+        # Try winget first, then chocolatey
+        for mgr, cmd in [
+            ("winget",  ["winget", "install", "--id", "OpenJS.NodeJS", "-e", "--silent"]),
+            ("choco",   ["choco",  "install", "nodejs", "-y"]),
+        ]:
+            if shutil.which(mgr):
+                info(f"Using {mgr}...")
+                r = subprocess.run(cmd)
+                if r.returncode == 0:
+                    installed_node = True
+                break
+    else:
+        # Linux / macOS
+        for pkg_mgr, cmd in [
+            ("apt-get", ["sudo", "apt-get", "install", "-y", "nodejs", "npm"]),
+            ("apt",     ["sudo", "apt",     "install", "-y", "nodejs", "npm"]),
+            ("dnf",     ["sudo", "dnf",     "install", "-y", "nodejs", "npm"]),
+            ("yum",     ["sudo", "yum",     "install", "-y", "nodejs", "npm"]),
+            ("brew",    ["brew", "install",             "node"]),
+            ("pacman",  ["sudo", "pacman",  "-S", "--noconfirm", "nodejs", "npm"]),
+            ("zypper",  ["sudo", "zypper",  "install", "-y", "nodejs", "npm"]),
+        ]:
+            if shutil.which(pkg_mgr):
+                info(f"Using {pkg_mgr}...")
+                r = subprocess.run(cmd)
+                if r.returncode == 0:
+                    installed_node = True
+                break
+
+    npx = shutil.which("npx")
+    if npx:
+        ok(f"npx: {npx}")
+    elif installed_node:
+        warn("Node.js installed but npx not in PATH yet — MCP servers will work after shell restart")
+    else:
+        warn("Could not install Node.js automatically — MCP npm servers will be skipped at runtime")
+        warn("  Debian/Ubuntu: sudo apt-get install -y nodejs npm")
+        warn("  macOS:         brew install node")
+        warn("  Windows:       https://nodejs.org")
+else:
+    ok(f"npx: {npx}")
+
 # uv
 uv = shutil.which("uv")
 if not uv:
