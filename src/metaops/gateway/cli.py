@@ -35,7 +35,10 @@ class CLIBridge(BaseGateway):
                 content = types.Content(role='user', parts=[types.Part(text=user_input)])
                 async for event in self.runner.run_async(user_id=self.user_id, session_id=session_id, new_message=content):
                     if event.is_final_response() and event.content and event.content.parts:
-                        text = event.content.parts[0].text
+                        text = "".join([
+                            part.text for part in event.content.parts 
+                            if part.text and not getattr(part, "thought", False)
+                        ])
                         if text: print(f"\n\033[92mMetaOps:\033[0m {text}\n", flush=True)
             except KeyboardInterrupt: continue
             except EOFError: break

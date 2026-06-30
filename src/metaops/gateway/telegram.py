@@ -53,6 +53,13 @@ class TelegramBridge(BaseGateway):
         session_id = self.session_manager.get_session_id("telegram", user_id)
         self._initialized_sessions.discard(session_id)
         self.session_manager._user_to_session.pop(user_id, None)
+        if self._session_service:
+            try:
+                await self._session_service.delete_session(
+                    app_name="metaops_enterprise", user_id=user_id, session_id=session_id
+                )
+            except Exception as e:
+                logger.error("Failed to delete session %s from database: %s", session_id, e)
         await update.message.reply_text("Session cleared. Send a message to start a new one.")
 
     async def _ensure_session(self, user_id: str, session_id: str, user_name: str):
@@ -97,7 +104,11 @@ class TelegramBridge(BaseGateway):
                 user_id=user_id, session_id=session_id, new_message=content
             ):
                 if event.is_final_response() and event.content and event.content.parts:
-                    text = event.content.parts[0].text
+                    # Filter out parts that represent internal model reasoning (thought=True)
+                    text = "".join([
+                        part.text for part in event.content.parts 
+                        if part.text and not getattr(part, "thought", False)
+                    ])
                     if text:
                         for i in range(0, len(text), 4000):
                             await context.bot.send_message(
