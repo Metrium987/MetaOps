@@ -128,11 +128,15 @@ else:
 # ── 4. Virtual environment + install ─────────────────────────────────────────
 header("4 / 5  Installing MetaOps + dependencies")
 
+# Resolve REPO_DIR to absolute BEFORE any chdir
+REPO_ABS = REPO_DIR.resolve()
+VENV_ABS = REPO_ABS / ".venv"
+
 # Create venv if needed
-if not VENV_DIR.exists():
-    info(f"Creating virtual environment at {VENV_DIR} ...")
+if not VENV_ABS.exists():
+    info(f"Creating virtual environment at {VENV_ABS} ...")
     r = subprocess.run(
-        [sys.executable, "-m", "venv", str(VENV_DIR)],
+        [sys.executable, "-m", "venv", str(VENV_ABS)],
         capture_output=True, text=True,
     )
     if r.returncode != 0:
@@ -140,17 +144,15 @@ if not VENV_DIR.exists():
         fail("Failed to create virtual environment")
     ok("Virtual environment created")
 else:
-    ok(f"Virtual environment already exists: {VENV_DIR}")
+    ok(f"Virtual environment already exists: {VENV_ABS}")
 
-# Resolve venv python and pip
+# Resolve venv executables (absolute paths — safe across chdir)
 if sys.platform == "win32":
-    venv_python = VENV_DIR / "Scripts" / "python.exe"
-    venv_pip    = VENV_DIR / "Scripts" / "pip.exe"
-    venv_bin    = VENV_DIR / "Scripts"
+    venv_python = VENV_ABS / "Scripts" / "python.exe"
+    venv_bin    = VENV_ABS / "Scripts"
 else:
-    venv_python = VENV_DIR / "bin" / "python"
-    venv_pip    = VENV_DIR / "bin" / "pip"
-    venv_bin    = VENV_DIR / "bin"
+    venv_python = VENV_ABS / "bin" / "python"
+    venv_bin    = VENV_ABS / "bin"
 
 # Upgrade pip inside venv (handles Debian's outdated bundled pip)
 info("Upgrading pip inside venv...")
@@ -161,7 +163,7 @@ subprocess.run(
 
 # Install MetaOps
 info("pip install -e .")
-os.chdir(REPO_DIR)
+os.chdir(REPO_ABS)
 r = subprocess.run(
     [str(venv_python), "-m", "pip", "install", "-e", ".", "--quiet"],
     capture_output=True, text=True,
@@ -253,7 +255,7 @@ print(f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}
 
   Location : {cwd}
-  Venv     : {VENV_DIR.resolve()}
+  Venv     : {VENV_ABS}
 
   Next steps:
   1. Edit .env — add at minimum OPENROUTER_API_KEY (or any provider key)
@@ -262,4 +264,4 @@ print(f"""
 
 if not launcher_installed and sys.platform != "win32":
     print(f"  Tip: add the venv to your PATH to use 'metaops' anywhere:")
-    print(f"  echo 'export PATH=\"{venv_bin.resolve()}:$PATH\"' >> ~/.bashrc && source ~/.bashrc\n")
+    print(f"  echo 'export PATH=\"{venv_bin}:$PATH\"' >> ~/.bashrc && source ~/.bashrc\n")
