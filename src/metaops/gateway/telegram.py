@@ -78,11 +78,19 @@ class TelegramBridge(PlatformBridge):
         user_input = update.message.text
         session_id = self.session_manager.get_session_id("telegram", user_id)
 
+        if self.session_manager.is_busy(session_id):
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ Je suis en train de traiter votre message précédent. Veuillez patienter..."
+            )
+            return
+
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         await self._ensure_session(user_id, session_id, user.first_name or user_id)
 
         content = types.Content(role="user", parts=[types.Part(text=user_input)])
         try:
+            self.session_manager.set_busy(session_id, True)
             async for event in self.runner.run_async(
                 user_id=user_id, session_id=session_id, new_message=content
             ):
@@ -96,6 +104,8 @@ class TelegramBridge(PlatformBridge):
         except Exception as exc:
             logger.error("Error for user %s: %s", user_id, exc)
             await context.bot.send_message(chat_id=chat_id, text=f"System Error: {exc}")
+        finally:
+            self.session_manager.set_busy(session_id, False)
 
     async def send_event(self, event: Event):
         pass
