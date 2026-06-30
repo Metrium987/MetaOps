@@ -100,6 +100,29 @@ _LITELLM_NATIVE_PROVIDERS = {
     "xai", "deepseek", "ollama", "azure", "openrouter",
 }
 
+# Providers whose API is OpenAI-compatible (/v1/chat/completions)
+# → can use the native OpenAI SDK driver instead of LiteLLM
+_OPENAI_COMPATIBLE_PROVIDERS = {
+    "openai", "groq", "xai", "deepseek", "fireworks", "nvidia",
+    "togetherai", "perplexity", "huggingface", "mistral",
+    # Aggregators / inference services that expose /v1/chat/completions
+    "openrouter", "nousresearch", "novita", "kilocode", "opencode",
+    "arcee", "gmi", "copilot",
+    # Asian providers (OpenAI-compatible)
+    "alibaba", "kimi", "stepfun", "xiaomi", "tencent",
+    # Local / self-hosted
+    "ollama", "lmstudio",
+}
+
+# Providers that use the native Anthropic Messages API
+_ANTHROPIC_NATIVE_PROVIDERS = {"anthropic", "minimax"}
+
+# Providers that use the native Google GenAI API
+_GEMINI_NATIVE_PROVIDERS = {"gemini"}
+
+import logging
+_cfg_logger = logging.getLogger("metaops.config")
+
 
 class ModelConfig:
     def __init__(self, model_env: str, provider_env: str, default_model: str, default_provider: str = "openrouter"):
@@ -112,11 +135,82 @@ class ModelConfig:
             # Use provider-specific default if the caller's default_model was built for a different provider
             self.model = _PROVIDER_DEFAULT_MODELS.get(self.provider, default_model)
 
-    def to_litellm(self):
+    # ── Native driver routing (fastest → slowest) ──────────────────────
+    def to_model(self):
+        """Return the best ADK model driver for this provider.
+
+        Priority:
+          1. Native Anthropic SDK  (anthropic provider → AnthropicLlm)
+          2. Native Google GenAI   (gemini provider → Gemini)
+          3. Native OpenAI SDK     (all OpenAI-compatible endpoints → OpenAILlm)
+          4. LiteLLM fallback      (everything else)
+        """
+        # ── 1. Anthropic native ──
+        if self.provider in _ANTHROPIC_NATIVE_PROVIDERS:
+            return self._build_anthropic()
+
+        # ── 2. Gemini native ──
+        if self.provider in _GEMINI_NATIVE_PROVIDERS:
+            return self._build_gemini()
+
+        # ── 3. OpenAI-compatible (SDK direct) ──
+        if self.provider in _OPENAI_COMPATIBLE_PROVIDERS:
+            return self._build_openai()
+
+        # ── 4. LiteLLM fallback ──
+        _cfg_logger.debug("Using LiteLLM fallback for provider=%s", self.provider)
+        return self._build_litellm()
+
+    def _build_openai(self):
+        """Use the native OpenAI SDK driver — no LiteLLM overhead."""
+        from google.adk.labs.openai import OpenAILlm
+
+        # Strip any litellm-style prefix (openai/, openrouter/, etc.)
+        model = self.model
+        for prefix in ("openai/", "openrouter/"):
+            if model.startswith(prefix):
+                model = model[len(prefix):]
+
+        # The OpenAI SDK client is created lazily (@cached_property) and reads
+        # OPENAI_API_KEY / OPENAI_BASE_URL at that moment, so we must set them
+        # persistently in the process env.
+        if self.api_key:
+            os.environ["OPENAI_API_KEY"] = self.api_key
+        if self.base_url:
+            os.environ["OPENAI_BASE_URL"] = self.base_url
+
+        _cfg_logger.info("Native OpenAI driver: provider=%s model=%s", self.provider, model)
+        return OpenAILlm(model=model)
+
+    def _build_anthropic(self):
+        """Use the native Anthropic SDK driver — direct Messages API."""
+        from google.adk.models.anthropic_llm import AnthropicLlm
+
+        model = self.model
+        # Strip litellm-style prefix
+        if model.startswith("anthropic/"):
+            model = model[len("anthropic/"):]
+
+        # AnthropicLlm creates its client lazily via @cached_property
+        if self.api_key:
+            os.environ["ANTHROPIC_API_KEY"] = self.api_key
+        if self.base_url:
+            os.environ["ANTHROPIC_BASE_URL"] = self.base_url
+
+        _cfg_logger.info("Native Anthropic driver: provider=%s model=%s", self.provider, model)
+        return AnthropicLlm(model=model)
+
+    def _build_gemini(self):
+        """Use the native Google GenAI driver — direct Gemini API."""
+        from google.adk.models import Gemini
+        model = self.model
+        _cfg_logger.info("Native Gemini driver: model=%s", model)
+        return Gemini(model=model)
+
+    def _build_litellm(self):
+        """Fallback to LiteLLM for providers without a native driver."""
         from google.adk.models import LiteLlm
         model = self.model
-        # Custom OpenAI-compatible endpoints need openai/ prefix so LiteLLM
-        # routes to the right code path instead of guessing from the model name
         if self.provider not in _LITELLM_NATIVE_PROVIDERS and not model.startswith("openai/"):
             model = f"openai/{model}"
         kwargs = {}
@@ -125,6 +219,11 @@ class ModelConfig:
         if self.base_url:
             kwargs["api_base"] = self.base_url
         return LiteLlm(model=model, **kwargs)
+
+    # ── Backward compatibility ──
+    def to_litellm(self):
+        """Legacy alias — now routes to the best native driver."""
+        return self.to_model()
 
 
 class MetaOpsConfig:
