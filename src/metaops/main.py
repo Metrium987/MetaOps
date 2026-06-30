@@ -69,6 +69,14 @@ async def main(args: argparse.Namespace):
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+    if not args.debug:
+        # Silence extremely noisy polling logs from third-party libraries
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("telegram").setLevel(logging.WARNING)
+        logging.getLogger("apscheduler").setLevel(logging.WARNING)
+        logging.getLogger("chromadb").setLevel(logging.WARNING)
+
+
     runner = create_runner()
     session_manager = SessionManager()
 
