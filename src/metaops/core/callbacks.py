@@ -19,6 +19,15 @@ _SENSITIVE_TOOLS = frozenset({
     "execute_workstream_command",
     "run_audit",
     "bash",
+    "full_dev_cycle",
+    "execute_skill",
+    "ingest_file_dependency",
+    "write_file",
+    "create_directory",
+    "move_file",
+    "filesystem/write_file",
+    "filesystem/create_directory",
+    "filesystem/move_file",
 })
 
 

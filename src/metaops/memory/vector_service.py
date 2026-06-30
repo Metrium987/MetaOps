@@ -50,13 +50,20 @@ class HybridVectorMemoryService(BaseMemoryService):
 
     async def search_memory(self, *, app_name: str, user_id: str, query: str) -> SearchMemoryResponse:
         results = []
+        try:
+            # Pre-compute the query embedding once to avoid redundant API calls
+            query_embeddings = self.embed_fn([query])
+        except Exception as e:
+            logger.warning("Failed to generate embedding for memory search: %s", e)
+            return SearchMemoryResponse(memories=[])
+
         for collection, label in [
             (self.episodic,   "Past Context"),
             (self.semantic,   "File Dependency"),
             (self.procedural, "Skill"),
         ]:
             try:
-                res = collection.query(query_texts=[query], n_results=3)
+                res = collection.query(query_embeddings=query_embeddings, n_results=3)
                 for doc in res['documents'][0]:
                     results.append(MemoryEntry(
                         content=types.Content(parts=[types.Part(text=f"[{label}] {doc}")]),

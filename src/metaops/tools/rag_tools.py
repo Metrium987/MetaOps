@@ -13,18 +13,30 @@ async def ingest_file_dependency(file_path: str, description: str, tool_context:
     Reads a local file, chunks it, and indexes it into the Semantic Memory cube.
     Use this to record file dependencies so the LLM can recall their contents later.
     """
+    user_role = "guest"
+    if tool_context and tool_context.state:
+        user_role = tool_context.state.get("user:role", "guest")
+    if user_role == "guest":
+        return {"status": "error", "message": "Access denied: guests are not allowed to ingest file dependencies."}
+
+    # Prevent directory traversal / out-of-workspace file leakage
+    workspace_root = os.path.abspath(os.getcwd())
+    abs_path = os.path.abspath(file_path)
+    if not abs_path.startswith(workspace_root):
+        return {"status": "error", "message": "Access denied: cannot ingest files outside the workspace directory."}
+
     if not _memory_service:
         return {"status": "error", "message": "Memory service not initialized."}
-    if not os.path.exists(file_path):
+    if not os.path.exists(abs_path):
         return {"status": "error", "message": f"File not found: {file_path}"}
         
-    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+    with open(abs_path, 'r', encoding='utf-8', errors='ignore') as f:
         content = f.read()
         
     chunk_size = 1000
     chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
     ids = [f"{os.path.basename(file_path)}_{i}" for i in range(len(chunks))]
-    metadatas = [{"file": file_path, "description": description, "chunk": i} for i in range(len(chunks))]
+    metadatas = [{"file": abs_path, "description": description, "chunk": i} for i in range(len(chunks))]
     
     _memory_service.semantic.add(documents=chunks, metadatas=metadatas, ids=ids)
     return {"status": "success", "message": f"Indexed {len(chunks)} chunks from {file_path} into Semantic Memory."}

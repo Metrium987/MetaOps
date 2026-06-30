@@ -18,11 +18,13 @@ class TelegramBridge(BaseGateway):
         session_manager: SessionManager,
         token: str,
         session_service: SQLiteSessionService = None,
+        default_role: str = "admin",
     ):
         self.runner = runner
         self.session_manager = session_manager
         self.token = token
         self._session_service = session_service
+        self.default_role = default_role
         self._initialized_sessions: set = set()
         self.application = Application.builder().token(token).build()
 
@@ -64,7 +66,7 @@ class TelegramBridge(BaseGateway):
                     user_id=user_id,
                     session_id=session_id,
                     state={
-                        "user:role": "admin",
+                        "user:role": self.default_role,
                         "user:name": user_name,
                         "user:telegram_id": user_id,
                     },

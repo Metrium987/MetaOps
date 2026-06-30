@@ -95,13 +95,13 @@ async def main(args: argparse.Namespace):
         app_name="metaops_enterprise",
         user_id="local_cli_user",
         session_id="metaops_session_local_cli_user",
-        state={"user:role": "admin", "user:name": "local_user"},
+        state={"user:role": config.default_cli_role, "user:name": "local_user"},
     )
     await session_service.create_session(
         app_name="metaops_enterprise",
         user_id="system_cron",
         session_id="cron_nightly_audit",
-        state={"user:role": "admin", "user:name": "cron"},
+        state={"user:role": config.default_cron_role, "user:name": "cron"},
     )
 
     async def deliver_to_platform(session_id: str, message: str):
@@ -135,6 +135,7 @@ async def main(args: argparse.Namespace):
                 session_manager=session_manager,
                 token=config.telegram_bot_token,
                 session_service=session_service,
+                default_role=config.default_telegram_role,
             )
             registry.register("telegram", telegram_bridge)
             registry.set_active("telegram", True)
@@ -158,7 +159,10 @@ async def main(args: argparse.Namespace):
 def run():
     parser = _build_parser()
     args = parser.parse_args()
-    asyncio.run(main(args))
+    try:
+        asyncio.run(main(args))
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        print("\n[MetaOps] Service arrêté proprement.")
 
 
 if __name__ == "__main__":

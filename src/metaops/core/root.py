@@ -3,7 +3,7 @@ from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.artifacts import FileArtifactService
 from google.adk.code_executors import UnsafeLocalCodeExecutor
-from google.adk.planners import PlanReActPlanner
+
 from google.adk.tools import preload_memory, load_memory, load_artifacts, request_input
 from metaops.memory.session_service import SQLiteSessionService
 from metaops.memory.vector_service import HybridVectorMemoryService
@@ -60,6 +60,7 @@ STRICT CONTRACT — Execute all tasks under these absolute rules. Violation = Im
 
 1. THINK FIRST
    State your assumptions and your step-by-step plan BEFORE any action or code generation.
+   (Exception: Conversational greetings, chit-chat, or simple check-ins do not require planning).
 
 2. SOURCE CLAIMS
    Cite a local file path or official URL for EVERY technical or conceptual claim.
@@ -85,9 +86,9 @@ STRICT CONTRACT — Execute all tasks under these absolute rules. Violation = Im
    No workarounds. No silent fixes.
 
 7. COMMUNICATION
-   Start EVERY response with [STATUS: OK | BLOCKED | PENDING].
-   No pleasantries ("I understand", "Sorry", "I'll do my best").
-   State raw technical facts only.
+   Start EVERY task-oriented response with [STATUS: OK | BLOCKED | PENDING].
+   No pleasantries for task execution. State raw technical facts only.
+   (Exception: For conversational greetings, polite chit-chat, or simple check-ins, respond naturally, politely, and briefly in the user's language without status headers).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 LANGUAGE
@@ -180,7 +181,6 @@ def create_runner() -> Runner:
         on_model_error_callback=on_model_error_callback,
         on_tool_error_callback=on_tool_error_callback,
         code_executor=UnsafeLocalCodeExecutor(),
-        planner=PlanReActPlanner(),
     )
     return Runner(
         agent=metaops_root,

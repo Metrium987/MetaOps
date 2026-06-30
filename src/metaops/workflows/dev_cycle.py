@@ -71,10 +71,15 @@ async def _run_shell(command: str) -> str:
     return "".join(chunks)[-4000:]
 
 
+import shlex
+import os
+from google.adk.tools import FunctionTool, ToolContext
+
 async def full_dev_cycle(
     task: str,
     run_tests: bool = False,
     test_command: str = "python -m pytest -q",
+    tool_context: ToolContext = None,
 ) -> dict:
     """Plan, implement (with review loop), and optionally test a coding task.
 
@@ -88,6 +93,7 @@ async def full_dev_cycle(
               file paths if known, and any constraints.
         run_tests: Set to True to run tests after implementation.
         test_command: Shell command to run tests. Default: python -m pytest -q
+        tool_context: ToolContext for inspecting role-based access.
 
     Returns:
         dict with keys:
@@ -98,6 +104,37 @@ async def full_dev_cycle(
             test_output — test command output (only present if run_tests=True)
     """
     logger.info("Full dev cycle started: %s", task[:80])
+
+    # Enforce security validation on test command at the start
+    if run_tests:
+        user_role = "guest"
+        if tool_context and tool_context.state:
+            user_role = tool_context.state.get("user:role", "guest")
+        
+        if user_role != "admin":
+            try:
+                tokens = shlex.split(test_command)
+                forbidden = {"rm", "sudo", "mkfs", "format", "dd"}
+                for tok in tokens:
+                    base_tok = os.path.basename(tok.replace("\\", "/")).lower()
+                    if any(base_tok.startswith(f) for f in forbidden):
+                        return {
+                            "plan": "Blocked",
+                            "code": "",
+                            "approved": False,
+                            "revisions": 0,
+                            "test_output": "Error: Insufficient permissions to execute sensitive commands in test suite.",
+                            "tests_passed": False
+                        }
+            except ValueError:
+                return {
+                    "plan": "Blocked",
+                    "code": "",
+                    "approved": False,
+                    "revisions": 0,
+                    "test_output": "Error: Test command parsing failed. Rejected for security reasons.",
+                    "tests_passed": False
+                }
 
     # Stage 1: Plan
     plan = await _run_agent_once(_planner_agent, task)

@@ -133,6 +133,11 @@ class MetaOpsConfig:
         self.cron_delivery_target: str = os.getenv("METAOPS_CRON_DELIVERY_TARGET", "cli")
         self.mcp_server_url: str = os.getenv("MCP_SERVER_URL", "http://localhost:8000/sse")
 
+        # Default role configs (can be overridden in .env)
+        self.default_cli_role: str = os.getenv("METAOPS_DEFAULT_CLI_ROLE", "admin")
+        self.default_cron_role: str = os.getenv("METAOPS_DEFAULT_CRON_ROLE", "admin")
+        self.default_telegram_role: str = os.getenv("METAOPS_DEFAULT_TELEGRAM_ROLE", "admin")
+
         # Per-agent model configs
         self.coordinator  = ModelConfig("METAOPS_COORDINATOR_MODEL",  "METAOPS_COORDINATOR_PROVIDER",  "openai/gpt-4o")
         self.workstream   = ModelConfig("METAOPS_WORKSTREAM_MODEL",   "METAOPS_WORKSTREAM_PROVIDER",   "openai/gpt-4o-mini")

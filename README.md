@@ -159,27 +159,58 @@ Edit `mcp_servers.json` to add MCP servers:
 
 ## Usage
 
-### CLI
+MetaOps provides separate commands to launch the CLI console (TUI) or the Telegram gateway independently.
+
+### CLI Gateway (Console TUI)
+
+Starts the interactive prompt with history.
 
 ```bash
-python -m metaops.main
+# Standard command (defaults to CLI)
+metaops
+
+# Or explicitly specifying the CLI gateway
+metaops gateway cli
 ```
 
-```
-MetaOps> Build a Python rate limiter class with tests
-MetaOps> Research the best vector DB options in 2025
-MetaOps> Run a security audit of this project
-```
+### Telegram Gateway
 
-### Telegram
-
-Set `TELEGRAM_BOT_TOKEN` in `.env`, then:
+Starts the Telegram bot polling listener.
 
 ```bash
-python -m metaops.main
+metaops gateway telegram
 ```
 
-Commands available in Telegram: `/start`, `/clear`
+### Global CLI Options
+
+* `--no-cron` — Disable the background cron job scheduler.
+* `--debug` — Enable verbose debugging logs (silenced by default for a clean prompt).
+
+---
+
+## Security & Role Management
+
+MetaOps implements role-based access control (RBAC) to restrict system and file operations based on the user's role:
+* **`admin`** — Full shell execution and complete access to all workflows and tools.
+* **`user`** — Restricted shell access (destructive keywords like `sudo`, `rm`, `mkfs`, etc. are blocked).
+* **`guest`** — No shell or system access. Sensitive tools (`full_dev_cycle`, `execute_skill`, `ingest_file_dependency`) are entirely blocked.
+
+You can configure the default roles and delivery targets inside your `.env` file:
+
+```env
+# Default role for CLI session (default: admin)
+METAOPS_DEFAULT_CLI_ROLE=admin
+
+# Default role for background cron scheduler (default: admin)
+METAOPS_DEFAULT_CRON_ROLE=admin
+
+# Default role for Telegram bot sessions (default: admin)
+METAOPS_DEFAULT_TELEGRAM_ROLE=admin
+
+# Target for cron delivery notifications ("cli" or "telegram:<chat_id>")
+METAOPS_CRON_DELIVERY_TARGET=cli
+```
+
 
 ---
 
