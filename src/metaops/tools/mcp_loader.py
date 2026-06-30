@@ -1,7 +1,10 @@
 import json
 import logging
 import os
+import shutil
+import socket
 from pathlib import Path
+from urllib.parse import urlparse
 
 from mcp import StdioServerParameters
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
@@ -12,6 +15,21 @@ from google.adk.tools.mcp_tool.mcp_session_manager import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _command_available(command: str) -> bool:
+    return shutil.which(command) is not None
+
+
+def _url_reachable(url: str, timeout: float = 1.0) -> bool:
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 _CONFIG_PATH = Path(__file__).parents[3] / "mcp_servers.json"
 
@@ -67,21 +85,38 @@ def load_mcp_toolsets(config_path: Path | str | None = None) -> list[McpToolset]
 
 def _build_toolset(name: str, cfg: dict) -> McpToolset | None:
     if "command" in cfg:
+        command = cfg["command"]
+        if not _command_available(command):
+            logger.warning(
+                "MCP server '%s' skipped — command '%s' not found in PATH "
+                "(install it or remove this server from mcp_servers.json)",
+                name, command,
+            )
+            return None
         env = cfg.get("env") or {}
         merged_env = {**os.environ, **env} if env else None
         params = StdioConnectionParams(
             server_params=StdioServerParameters(
-                command=cfg["command"],
+                command=command,
                 args=cfg.get("args", []),
                 env=merged_env,
             ),
             timeout=cfg.get("timeout", 10.0),
         )
-        logger.debug("MCP stdio '%s': %s %s", name, cfg["command"], cfg.get("args", []))
+        logger.debug("MCP stdio '%s': %s %s", name, command, cfg.get("args", []))
         return McpToolset(connection_params=params)
 
     if "url" in cfg:
         url = cfg["url"]
+        parsed = urlparse(url)
+        # Skip localhost/127.0.0.1 servers that aren't actually running
+        if parsed.hostname in ("localhost", "127.0.0.1", "::1") and not _url_reachable(url):
+            logger.warning(
+                "MCP server '%s' skipped — %s is not reachable "
+                "(start the server or remove it from mcp_servers.json)",
+                name, url,
+            )
+            return None
         headers = cfg.get("headers") or None
         transport = cfg.get("transport", "sse").lower()
         if transport == "http":
