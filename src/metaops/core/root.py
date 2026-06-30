@@ -3,7 +3,7 @@ from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.artifacts import FileArtifactService
 from google.adk.code_executors import UnsafeLocalCodeExecutor
-from google.adk.planners import BuiltInPlanner
+from google.adk.planners import PlanReActPlanner
 from google.adk.tools import preload_memory, load_memory, load_artifacts, request_input
 from metaops.memory.session_service import SQLiteSessionService
 from metaops.memory.vector_service import HybridVectorMemoryService
@@ -180,7 +180,7 @@ def create_runner() -> Runner:
         on_model_error_callback=on_model_error_callback,
         on_tool_error_callback=on_tool_error_callback,
         code_executor=UnsafeLocalCodeExecutor(),
-        planner=BuiltInPlanner(),
+        planner=PlanReActPlanner(),
     )
     return Runner(
         agent=metaops_root,
