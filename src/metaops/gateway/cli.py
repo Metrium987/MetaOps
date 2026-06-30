@@ -4,10 +4,10 @@ from prompt_toolkit.history import InMemoryHistory
 from google.adk.events import Event
 from google.adk.runners import Runner
 from google.genai import types
-from metaops.gateway.base import PlatformBridge
+from metaops.gateway.base import BaseGateway
 from metaops.gateway.session_manager import SessionManager
 
-class CLIBridge(PlatformBridge):
+class CLIBridge(BaseGateway):
     def __init__(self, runner: Runner, session_manager: SessionManager):
         self.runner = runner
         self.session_manager = session_manager
@@ -39,6 +39,8 @@ class CLIBridge(PlatformBridge):
                         if text: print(f"\n\033[92mMetaOps:\033[0m {text}\n", flush=True)
             except KeyboardInterrupt: continue
             except EOFError: break
+
+    async def stop(self): pass
 
     async def send_event(self, event: Event): pass
 

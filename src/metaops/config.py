@@ -130,6 +130,7 @@ class ModelConfig:
 class MetaOpsConfig:
     def __init__(self):
         self.telegram_bot_token: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
+        self.cron_delivery_target: str = os.getenv("METAOPS_CRON_DELIVERY_TARGET", "cli")
         self.mcp_server_url: str = os.getenv("MCP_SERVER_URL", "http://localhost:8000/sse")
 
         # Per-agent model configs

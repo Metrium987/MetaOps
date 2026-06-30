@@ -68,6 +68,8 @@ async def main(args: argparse.Namespace):
     from metaops.gateway.telegram import TelegramBridge
     from metaops.scheduler.cron import MetaOpsCronScheduler
     from metaops.config import MetaOpsConfig
+    from metaops.gateway.registry import GatewayRegistry
+    from metaops.gateway.delivery import DeliveryService
 
     config = MetaOpsConfig()
 
@@ -86,6 +88,8 @@ async def main(args: argparse.Namespace):
 
     runner = create_runner()
     session_manager = SessionManager()
+    registry = GatewayRegistry()
+    delivery_service = DeliveryService(registry, telegram_token=config.telegram_bot_token)
 
     await session_service.create_session(
         app_name="metaops_enterprise",
@@ -101,7 +105,8 @@ async def main(args: argparse.Namespace):
     )
 
     async def deliver_to_platform(session_id: str, message: str):
-        print(f"\n\033[94m[SYSTEM DELIVERY -> {session_id}]\033[0m\n{message}\n")
+        # Route cron outputs dynamically using DeliveryService
+        await delivery_service.deliver(config.cron_delivery_target, message)
 
     # Cron scheduler
     cron_scheduler = None
@@ -131,13 +136,19 @@ async def main(args: argparse.Namespace):
                 token=config.telegram_bot_token,
                 session_service=session_service,
             )
+            registry.register("telegram", telegram_bridge)
+            registry.set_active("telegram", True)
             await telegram_bridge.start()
             print("MetaOps Telegram gateway running. Press Ctrl+C to stop.")
             await asyncio.Event().wait()
         else:
             cli_bridge = CLIBridge(runner=runner, session_manager=session_manager)
+            registry.register("cli", cli_bridge)
+            registry.set_active("cli", True)
             await cli_bridge.start()
     finally:
+        registry.set_active("telegram", False)
+        registry.set_active("cli", False)
         if cron_scheduler:
             cron_scheduler.shutdown()
         if telegram_bridge:

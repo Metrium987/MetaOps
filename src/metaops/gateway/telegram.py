@@ -4,14 +4,14 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from google.adk.runners import Runner
 from google.adk.events import Event
 from google.genai import types
-from metaops.gateway.base import PlatformBridge
+from metaops.gateway.base import BaseGateway
 from metaops.gateway.session_manager import SessionManager
 from metaops.memory.session_service import SQLiteSessionService
 
 logger = logging.getLogger(__name__)
 
 
-class TelegramBridge(PlatformBridge):
+class TelegramBridge(BaseGateway):
     def __init__(
         self,
         runner: Runner,
@@ -106,6 +106,13 @@ class TelegramBridge(PlatformBridge):
             await context.bot.send_message(chat_id=chat_id, text=f"System Error: {exc}")
         finally:
             self.session_manager.set_busy(session_id, False)
+
+    async def send_direct_message(self, chat_id: str, text: str):
+        if self.application and self.application.bot:
+            for i in range(0, len(text), 4000):
+                await self.application.bot.send_message(
+                    chat_id=chat_id, text=text[i : i + 4000]
+                )
 
     async def send_event(self, event: Event):
         pass
