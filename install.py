@@ -112,12 +112,15 @@ else:
 
 # ── Smoke test ────────────────────────────────────────────────────────────────
 header("Smoke test")
-info("Importing metaops.config ...")
-try:
-    from metaops.config import MetaOpsConfig  # noqa: F401
-    ok("Import OK")
-except Exception as exc:
-    fail(f"Import failed: {exc}")
+info("Verifying install in a fresh Python process...")
+r = subprocess.run(
+    [sys.executable, "-c", "from metaops.config import MetaOpsConfig; MetaOpsConfig()"],
+    capture_output=True, text=True,
+)
+if r.returncode != 0:
+    print(r.stderr.strip())
+    fail("Import check failed — see errors above")
+ok("MetaOps imports correctly")
 
 
 # ── Done ──────────────────────────────────────────────────────────────────────
