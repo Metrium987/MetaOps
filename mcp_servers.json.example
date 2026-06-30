@@ -2,34 +2,26 @@
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/Metrium/Documents"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "${HOME}"],
       "env": {}
     },
     "github": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
       "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..."
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_your_real_token_here"
       }
     },
     "brave-search": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-brave-search"],
       "env": {
-        "BRAVE_API_KEY": ""
+        "BRAVE_API_KEY": "your_brave_api_key_here"
       }
     },
     "memory": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-memory"]
-    },
-    "custom-sse-server": {
-      "url": "http://localhost:8000/sse",
-      "headers": {}
-    },
-    "custom-http-server": {
-      "url": "http://localhost:9000/mcp",
-      "transport": "http"
     }
   }
 }

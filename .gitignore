@@ -7,6 +7,9 @@ SOURCE/
 # Environment — contains API keys
 .env
 
+# MCP server config — machine-specific (paths, keys) — copy from mcp_servers.json.example
+mcp_servers.json
+
 # Runtime data
 data/
 

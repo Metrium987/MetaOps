@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 import socket
+import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -61,11 +62,18 @@ def load_mcp_toolsets(config_path: Path | str | None = None) -> list[McpToolset]
     path = Path(config_path) if config_path else _CONFIG_PATH
 
     if not path.exists():
-        fallback_url = os.getenv("MCP_SERVER_URL", "").strip()
-        if fallback_url:
-            logger.info("mcp_servers.json not found — falling back to MCP_SERVER_URL=%s", fallback_url)
-            return [McpToolset(connection_params=SseConnectionParams(url=fallback_url))]
-        return []
+        # Auto-copy from example if available
+        example = path.parent / (path.name + ".example")
+        if example.exists():
+            import shutil as _shutil
+            _shutil.copy(example, path)
+            logger.info("mcp_servers.json created from mcp_servers.json.example — edit it to add your real paths/keys")
+        else:
+            fallback_url = os.getenv("MCP_SERVER_URL", "").strip()
+            if fallback_url:
+                logger.info("mcp_servers.json not found — falling back to MCP_SERVER_URL=%s", fallback_url)
+                return [McpToolset(connection_params=SseConnectionParams(url=fallback_url))]
+            return []
 
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
@@ -95,6 +103,19 @@ def _env_looks_valid(env: dict) -> tuple[bool, str]:
     return True, ""
 
 
+def _expand_arg(arg: str) -> str:
+    """Expand environment variables and ~ in path-like arguments."""
+    return os.path.expanduser(os.path.expandvars(arg))
+
+
+def _arg_looks_like_wrong_platform_path(arg: str) -> bool:
+    """Return True if the arg is a Windows absolute path but we're on Linux/macOS."""
+    if sys.platform == "win32":
+        return False
+    # Detect C:\... or C:/... style Windows paths
+    return len(arg) >= 3 and arg[1] == ":" and arg[2] in ("/", "\\")
+
+
 def _build_toolset(name: str, cfg: dict) -> McpToolset | None:
     if "command" in cfg:
         command = cfg["command"]
@@ -116,16 +137,34 @@ def _build_toolset(name: str, cfg: dict) -> McpToolset | None:
                     name, reason,
                 )
                 return None
+        # Expand env vars and ~ in args; skip if any arg is a wrong-OS path
+        raw_args = cfg.get("args", [])
+        expanded_args = []
+        skip = False
+        for arg in raw_args:
+            expanded = _expand_arg(str(arg))
+            if _arg_looks_like_wrong_platform_path(expanded):
+                logger.warning(
+                    "MCP server '%s' skipped — arg %r looks like a Windows path "
+                    "(update mcp_servers.json with the correct path for this OS)",
+                    name, arg,
+                )
+                skip = True
+                break
+            expanded_args.append(expanded)
+        if skip:
+            return None
+
         merged_env = {**os.environ, **env} if env else None
         params = StdioConnectionParams(
             server_params=StdioServerParameters(
                 command=command,
-                args=cfg.get("args", []),
+                args=expanded_args,
                 env=merged_env,
             ),
             timeout=cfg.get("timeout", 10.0),
         )
-        logger.debug("MCP stdio '%s': %s %s", name, command, cfg.get("args", []))
+        logger.debug("MCP stdio '%s': %s %s", name, command, expanded_args)
         return McpToolset(connection_params=params)
 
     if "url" in cfg:
