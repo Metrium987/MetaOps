@@ -10,7 +10,6 @@ from pathlib import Path
 
 REPO_URL = "https://github.com/Metrium987/MetaOps.git"
 REPO_DIR  = Path("MetaOps")
-VENV_DIR  = REPO_DIR / ".venv"
 
 # Force UTF-8 on Windows consoles
 if sys.platform == "win32":
@@ -32,12 +31,14 @@ def warn(msg):   print(f"  {WARN}  {msg}")
 def info(msg):   print(f"  {INFO}  {msg}")
 def header(msg): print(f"\n{BOLD}{msg}{RESET}")
 
-def _apt_install(*packages):
-    r = subprocess.run(
-        ["sudo", "apt-get", "install", "-y", *packages],
-        capture_output=False,
-    )
-    return r.returncode == 0
+def _run(*cmd, stream=True, check=False):
+    """Run a command, optionally streaming output."""
+    r = subprocess.run(cmd, capture_output=not stream)
+    if check and r.returncode != 0:
+        if not stream and r.stderr:
+            print(r.stderr.decode(errors="replace")[-2000:])
+        fail(f"Command failed: {' '.join(str(c) for c in cmd)}")
+    return r
 
 
 header("MetaOps — Setup")
@@ -52,7 +53,7 @@ if (major, minor) < (3, 10):
 ok(f"Python {major}.{minor}  ({sys.executable})")
 
 
-# ── 2. System dependencies (git, venv, pip) ───────────────────────────────────
+# ── 2. System dependencies ────────────────────────────────────────────────────
 header("2 / 5  System dependencies")
 
 # git
@@ -70,7 +71,7 @@ if not git:
     ]:
         if shutil.which(pkg_mgr):
             info(f"Using {pkg_mgr}...")
-            r = subprocess.run(cmd, capture_output=False)
+            r = subprocess.run(["sudo", pkg_mgr, "install", "-y", "git"] if pkg_mgr != "brew" else ["brew", "install", "git"])
             if r.returncode == 0:
                 git = shutil.which("git")
             break
@@ -84,21 +85,44 @@ if not git:
         )
 ok(f"git: {git}")
 
-# venv module (Debian splits it out as python3-venv)
-r = subprocess.run(
-    [sys.executable, "-m", "venv", "--help"],
-    capture_output=True,
-)
-if r.returncode != 0:
-    info("python venv module missing — installing python3-venv...")
-    py_ver = f"python{major}.{minor}"
-    if shutil.which("apt-get"):
-        ok_apt = _apt_install(f"{py_ver}-venv") or _apt_install("python3-venv")
-        if not ok_apt:
-            fail("Could not install python3-venv. Run: sudo apt-get install python3-venv")
+# uv
+uv = shutil.which("uv")
+if not uv:
+    info("uv not found — installing (fast Python package manager)...")
+    if sys.platform == "win32":
+        # Windows: install via pip as fallback
+        r = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "uv", "--quiet"],
+            capture_output=True,
+        )
+        uv = shutil.which("uv")
     else:
-        fail("venv module not found. Install the python3-venv package for your distro.")
-ok("venv module available")
+        # Linux/macOS: official installer
+        r = subprocess.run(
+            "curl -LsSf https://astral.sh/uv/install.sh | sh",
+            shell=True,
+        )
+        # The installer puts uv in ~/.local/bin or ~/.cargo/bin — refresh PATH
+        for candidate in [
+            Path.home() / ".local" / "bin" / "uv",
+            Path.home() / ".cargo" / "bin" / "uv",
+        ]:
+            if candidate.exists():
+                uv = str(candidate)
+                break
+        if not uv:
+            uv = shutil.which("uv")
+
+    if not uv:
+        # Final fallback: pip install uv
+        warn("Official uv installer failed — trying pip install uv...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "uv", "--quiet"])
+        uv = shutil.which("uv") or str(Path(sys.executable).parent / "uv")
+
+if uv and Path(uv).exists():
+    ok(f"uv: {uv}")
+else:
+    fail("Could not install uv. Run manually: curl -LsSf https://astral.sh/uv/install.sh | sh")
 
 
 # ── 3. Clone or update ────────────────────────────────────────────────────────
@@ -124,29 +148,10 @@ else:
         fail("git clone failed")
     ok("Repository cloned")
 
-
-# ── 4. Virtual environment + install ─────────────────────────────────────────
-header("4 / 5  Installing MetaOps + dependencies")
-
-# Resolve REPO_DIR to absolute BEFORE any chdir
+# Resolve absolute paths before any chdir
 REPO_ABS = REPO_DIR.resolve()
 VENV_ABS = REPO_ABS / ".venv"
 
-# Create venv if needed
-if not VENV_ABS.exists():
-    info(f"Creating virtual environment at {VENV_ABS} ...")
-    r = subprocess.run(
-        [sys.executable, "-m", "venv", str(VENV_ABS)],
-        capture_output=True, text=True,
-    )
-    if r.returncode != 0:
-        print(r.stderr)
-        fail("Failed to create virtual environment")
-    ok("Virtual environment created")
-else:
-    ok(f"Virtual environment already exists: {VENV_ABS}")
-
-# Resolve venv executables (absolute paths — safe across chdir)
 if sys.platform == "win32":
     venv_python = VENV_ABS / "Scripts" / "python.exe"
     venv_bin    = VENV_ABS / "Scripts"
@@ -154,34 +159,37 @@ else:
     venv_python = VENV_ABS / "bin" / "python"
     venv_bin    = VENV_ABS / "bin"
 
-# Upgrade pip inside venv
-info("Upgrading pip inside venv...")
-subprocess.run(
-    [str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "--quiet"],
-    capture_output=True,
-)
-ok("pip up to date")
 
-# Install MetaOps — stream output so download progress is visible
-info("pip install -e .  (downloading dependencies...)")
-print()
+# ── 4. Virtual environment + install (uv) ────────────────────────────────────
+header("4 / 5  Installing MetaOps + dependencies  (uv)")
+
+# Create venv with uv
+if not VENV_ABS.exists():
+    info(f"Creating venv at {VENV_ABS} ...")
+    _run(uv, "venv", str(VENV_ABS), "--python", sys.executable, stream=False, check=True)
+    ok("Virtual environment created")
+else:
+    ok(f"Virtual environment already exists: {VENV_ABS}")
+
+# Install MetaOps — uv pip install streams output automatically
 os.chdir(REPO_ABS)
-r = subprocess.run(
-    [str(venv_python), "-m", "pip", "install", "-e", "."],
-)
+info("uv pip install -e .  (downloading dependencies...)")
+print()
+r = subprocess.run([uv, "pip", "install", "-e", ".", "--python", str(venv_python)])
 print()
 if r.returncode != 0:
-    fail("pip install failed — see errors above")
-ok("MetaOps installed in venv")
+    fail("Installation failed — see errors above")
+ok("MetaOps installed")
 
-# Optional audit tools — stream output
+# Optional audit tools
 for tool_bin, package in [("bandit", "bandit"), ("pip-audit", "pip-audit")]:
     if (venv_bin / tool_bin).exists() or (venv_bin / f"{tool_bin}.exe").exists():
         ok(f"{tool_bin} already available")
     else:
         info(f"Installing {package} (optional — audit workflow)...")
         r = subprocess.run(
-            [str(venv_python), "-m", "pip", "install", package],
+            [uv, "pip", "install", package, "--python", str(venv_python)],
+            capture_output=True,
         )
         if r.returncode == 0:
             ok(f"{tool_bin} installed")
@@ -192,11 +200,9 @@ for tool_bin, package in [("bandit", "bandit"), ("pip-audit", "pip-audit")]:
 # ── 5. First-run setup ────────────────────────────────────────────────────────
 header("5 / 5  First-run setup")
 
-# data directories
 Path("data/artifacts").mkdir(parents=True, exist_ok=True)
 ok("./data/ directories created")
 
-# .env
 env     = Path(".env")
 example = Path(".env.example")
 if env.exists():
@@ -207,7 +213,6 @@ elif example.exists():
 else:
     warn("No .env.example — create .env manually before starting")
 
-# Shell check
 shell = shutil.which("bash") or shutil.which("powershell") or shutil.which("cmd")
 if shell:
     ok(f"Shell: {shell}")
@@ -222,9 +227,7 @@ if sys.platform != "win32" and venv_metaops.exists():
         try:
             launcher_dir.mkdir(parents=True, exist_ok=True)
             launcher = launcher_dir / "metaops"
-            launcher.write_text(
-                f"#!/bin/sh\nexec {venv_metaops.resolve()} \"$@\"\n"
-            )
+            launcher.write_text(f"#!/bin/sh\nexec {venv_metaops.resolve()} \"$@\"\n")
             launcher.chmod(0o755)
             ok(f"Global launcher installed: {launcher}")
             launcher_installed = True
@@ -258,7 +261,7 @@ print(f"""
   Venv     : {VENV_ABS}
 
   Next steps:
-  1. Edit .env — add at minimum OPENROUTER_API_KEY (or any provider key)
+  1. Edit .env — add at minimum your provider API key
   2. {metaops_cmd}
 """)
 
