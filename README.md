@@ -24,33 +24,96 @@ Enterprise-grade autonomous AI agent built on [Google ADK 2.3.0](https://google.
 ## Architecture
 
 ```
-metaops/
-├── core/
-│   ├── root.py          # Agent + Runner factory (coordinator, tools, callbacks)
-│   ├── callbacks.py     # Skill loading (before) + skill harvest (after)
-│   └── background.py    # Deep audit workflow (bandit, pip-audit, code scan)
-├── workflows/
-│   ├── vibe_coding.py   # Coder → Reviewer → loop
-│   ├── dev_cycle.py     # Planner → vibe_code → optional tests
-│   ├── research.py      # Researcher (Tavily) → Synthesizer
-│   └── thinker.py       # Deep reasoning sub-agent
-├── tools/
-│   ├── web_search.py    # Tavily: search, extract, crawl, map, company_info
-│   ├── mcp_loader.py    # Multi-server MCP loader (mcp_servers.json)
-│   ├── secure_toolset.py # Role-gated shell execution
-│   ├── workstream.py    # Isolated bash pipeline executor
-│   ├── skill_executor.py # Execute learned skills from SQLite
-│   └── rag_tools.py     # File ingestion into semantic memory
-├── memory/
-│   ├── session_service.py # SQLite session persistence
-│   ├── vector_service.py  # ChromaDB (episodic/semantic/procedural/persona)
-│   └── database.py        # Skills SQLite DB
-├── gateway/
-│   ├── telegram.py      # Telegram bot gateway
-│   └── cli.py           # Interactive CLI gateway
-└── scheduler/
-    └── cron.py          # APScheduler cron runner
+MetaOps/
+├── bootstrap.py                 # Remote one-liner: clone + uv venv + install + data dirs (no repo needed yet)
+├── install.py                   # Local setup once cloned: pip install -e ., optional tools, .env, smoke test
+├── pyproject.toml               # Package metadata, dependencies, `metaops` CLI entry point
+├── mcp_servers.json(.example)   # MCP server definitions consumed by tools/mcp_loader.py
+├── .env(.example)               # Provider keys, per-agent model routing, roles, paths
+│
+└── src/metaops/
+    ├── main.py                  # argparse CLI entry point — wires services, picks CLI vs Telegram gateway
+    ├── config.py                 # MetaOpsConfig + ModelConfig — provider registry, .env parsing, native driver routing
+    │
+    ├── backends/
+    │   └── local.py               # LocalTerminalBackend — streams shell output, bounded timeout/output size
+    │
+    ├── core/
+    │   ├── root.py                 # Builds the coordinator Agent + Runner (system prompt, tools, services)
+    │   ├── callbacks.py             # Memory auto-injection, skill harvesting, tool/model error callbacks
+    │   ├── background.py            # Audit workflow tools (bandit, pip-audit, source pattern scan)
+    │   └── local_llm_driver.py      # OpenAILlm hardened for local backends (Ollama/LM Studio) — recovers missing tool_call id/name
+    │
+    ├── gateway/
+    │   ├── base.py                  # PlatformBridge / BaseGateway abstract interfaces
+    │   ├── cli.py                   # CLIBridge — interactive prompt_toolkit console
+    │   ├── telegram.py               # TelegramBridge — bot polling, per-user sessions, RBAC, allowlist
+    │   ├── delivery.py               # DeliveryService — routes cron/system messages to "cli" or "telegram:<chat_id>"
+    │   ├── registry.py               # GatewayRegistry — tracks which gateway(s) are currently active
+    │   └── session_manager.py        # Maps user_id → session_id, tracks which sessions are busy
+    │
+    ├── memory/
+    │   ├── database.py               # MemoryDatabase — SQLite store for learned procedural skills
+    │   ├── embeddings.py             # MetaOpsEmbeddingFunction — local ONNX or API embeddings for ChromaDB
+    │   └── vector_service.py         # HybridVectorMemoryService — episodic/semantic/procedural/persona ChromaDB cubes
+    │
+    ├── scheduler/
+    │   └── cron.py                   # MetaOpsCronScheduler — APScheduler-driven unattended jobs
+    │
+    ├── tools/
+    │   ├── _shell_guard.py           # check_command_allowed() — denylist gate (rm/sudo/mkfs/...) for non-admin roles
+    │   ├── mcp_loader.py              # Loads MCP servers (stdio/SSE/streamable HTTP) from mcp_servers.json
+    │   ├── memory_tools.py            # save_procedural_skill / recall_past_context agent tools
+    │   ├── rag_tools.py               # ingest_file_dependency — indexes a local file into semantic memory
+    │   ├── secure_toolset.py          # execute_secure_command — role-gated shell tool (admin/user/guest)
+    │   ├── skill_executor.py          # execute_skill — replays a learned skill, shell-quotes caller args
+    │   ├── web_search.py              # Tavily-backed search / extract / crawl / map / company_info tools
+    │   └── workstream.py              # execute_workstream_command + workstream_executor sub-agent (long pipelines)
+    │
+    └── workflows/
+        ├── agent_runner.py            # run_agent_once() — shared throwaway Runner/session helper for the workflows below
+        ├── vibe_coding.py              # Coder → Reviewer revision loop (up to MAX_REVISIONS=3 passes)
+        ├── dev_cycle.py                 # Architect plan → vibe_code → optional test run
+        ├── research.py                  # Researcher (Tavily) → Synthesizer — structured report
+        └── thinker.py                    # Deep-reasoning sub-agent exposed as AgentTool
 ```
+
+---
+
+## Module Lexicon
+
+| File | Role |
+|------|------|
+| `main.py` | CLI entry point (`metaops` command). Parses args, builds the `Runner`, registers gateways, starts the cron scheduler, picks CLI or Telegram. |
+| `config.py` | `MetaOpsConfig` (global settings) + `ModelConfig` (per-agent provider/model/key/`max_tokens`, picks the fastest native driver: Anthropic → Gemini → OpenAI-compatible → LiteLLM fallback). |
+| `backends/local.py` | `LocalTerminalBackend` — runs a shell command and streams output, bounded by a wall-clock timeout and a max-output-bytes cap. |
+| `core/root.py` | Assembles the coordinator `Agent`: system prompt (the "strict contract"), every tool/workflow, session/memory/artifact services, then builds the `Runner`. |
+| `core/callbacks.py` | `before_agent`/`after_agent` hooks — auto-injects relevant memory before a turn, harvests reusable skills after one; also tool/model error callbacks and a sensitive-tool list requiring extra scrutiny. |
+| `core/background.py` | Tools used by the nightly audit job: list/read source files, run `bandit` + `pip-audit`, scan for code-quality patterns. |
+| `core/local_llm_driver.py` | `LocalOpenAILlm(OpenAILlm)` — patches responses from local/self-hosted OpenAI-compatible servers that omit `tool_call.id`/`name`, which would otherwise silently break the tool-call turn. |
+| `gateway/base.py` | `PlatformBridge`/`BaseGateway` — abstract `start()`/`stop()`/`send_event()` contract all gateways implement. |
+| `gateway/cli.py` | `CLIBridge` — interactive console loop (`prompt_toolkit`), feeds user input into the `Runner`. |
+| `gateway/telegram.py` | `TelegramBridge` — Telegram bot polling, `/start`/`/clear`, per-user sessions, optional user allowlist, role assignment. |
+| `gateway/delivery.py` | `DeliveryService` — sends a message to a delivery target string (`"cli"` or `"telegram:<chat_id>"`), used by the cron scheduler to report results. |
+| `gateway/registry.py` | `GatewayRegistry` — tiny registry of which gateway instances exist and whether each is currently active. |
+| `gateway/session_manager.py` | Maps `user_id` → stable `session_id` per platform, and tracks which sessions are mid-turn ("busy") to avoid concurrent runs. |
+| `memory/database.py` | `MemoryDatabase` — SQLite table of learned skills (`name`, `trigger_pattern`, `procedure`). |
+| `memory/embeddings.py` | `MetaOpsEmbeddingFunction` — ChromaDB embedding function, either local ONNX (no key) or an OpenAI-compatible API. |
+| `memory/vector_service.py` | `HybridVectorMemoryService` — four ChromaDB collections (episodic, semantic, procedural, persona) implementing ADK's `BaseMemoryService`. |
+| `scheduler/cron.py` | `MetaOpsCronScheduler` — wraps APScheduler; runs a prompt unattended on a cron expression and forwards the final text via a delivery callback. |
+| `tools/_shell_guard.py` | `check_command_allowed()` — shared denylist (`rm`, `sudo`, `mkfs`, `format`, `dd`) gating shell tools for non-admin roles. Defense-in-depth only, not a sandbox. |
+| `tools/mcp_loader.py` | Reads `mcp_servers.json`, checks each server is reachable/the command exists, and builds `McpToolset`s (stdio/SSE/streamable HTTP). |
+| `tools/memory_tools.py` | `save_procedural_skill` (persists a skill as a versioned ADK artifact) and `recall_past_context` (semantic search over past sessions). |
+| `tools/rag_tools.py` | `ingest_file_dependency` — reads/chunks/indexes a local file into the semantic memory cube, with path-traversal protection and a guest-role block. |
+| `tools/secure_toolset.py` | `SecureMetaOpsToolset` — exposes `execute_secure_command`, gated by `_shell_guard` and the caller's `user:role`. |
+| `tools/skill_executor.py` | `execute_skill` — looks up a learned procedure and runs it with caller-supplied arguments, shell-quoted to prevent injection. |
+| `tools/web_search.py` | Tavily client wrappers: `web_search`, `web_extract`, `web_crawl`, `web_map`, `company_info`. |
+| `tools/workstream.py` | `execute_workstream_command` (long-running pipeline tool) plus a dedicated `workstream_executor` sub-agent for multi-step bash jobs. |
+| `workflows/agent_runner.py` | `run_agent_once()` — creates a throwaway `Runner` + in-memory session, sends one prompt, returns the concatenated text output (filters out `thought` parts). Shared by the three workflows below. |
+| `workflows/vibe_coding.py` | Coder agent writes code → Reviewer agent checks it → up to `MAX_REVISIONS` (3) automatic correction passes. |
+| `workflows/dev_cycle.py` | Architect agent produces an implementation plan → `vibe_code` implements it → optional test run. |
+| `workflows/research.py` | Researcher agent gathers material via the Tavily tools → Synthesizer agent produces a structured report. |
+| `workflows/thinker.py` | Single deep-reasoning agent (problem breakdown → step-by-step analysis → tradeoffs → recommendation), exposed as an `AgentTool`. |
 
 ---
 

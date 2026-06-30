@@ -143,6 +143,16 @@ class ModelConfig:
             # Use provider-specific default if the caller's default_model was built for a different provider
             self.model = _PROVIDER_DEFAULT_MODELS.get(self.provider, default_model)
 
+        # ADK's OpenAILlm defaults max_tokens to 4096 — too small for a tool
+        # call whose argument is a full file (e.g. a single-file HTML/CSS/JS
+        # game): the completion gets truncated mid-JSON, the arguments fail
+        # to parse, and the tool gets called with empty args. Default to a
+        # roomier budget; override per-agent via METAOPS_<AGENT>_MAX_TOKENS
+        # (derived from model_env, e.g. METAOPS_COORDINATOR_MODEL ->
+        # METAOPS_COORDINATOR_MAX_TOKENS).
+        max_tokens_env = model_env.rsplit("_MODEL", 1)[0] + "_MAX_TOKENS"
+        self.max_tokens = int(os.getenv(max_tokens_env, "16000"))
+
     # ── Native driver routing (fastest → slowest) ──────────────────────
     def to_model(self):
         """Return the best ADK model driver for this provider.
@@ -197,11 +207,17 @@ class ModelConfig:
         if self.provider in _LOCAL_PROVIDERS:
             from metaops.core.local_llm_driver import LocalOpenAILlm
 
-            _cfg_logger.info("Hardened local OpenAI driver: provider=%s model=%s", self.provider, model)
-            return LocalOpenAILlm(model=model)
+            _cfg_logger.info(
+                "Hardened local OpenAI driver: provider=%s model=%s max_tokens=%d",
+                self.provider, model, self.max_tokens,
+            )
+            return LocalOpenAILlm(model=model, max_tokens=self.max_tokens)
 
-        _cfg_logger.info("Native OpenAI driver: provider=%s model=%s", self.provider, model)
-        return OpenAILlm(model=model)
+        _cfg_logger.info(
+            "Native OpenAI driver: provider=%s model=%s max_tokens=%d",
+            self.provider, model, self.max_tokens,
+        )
+        return OpenAILlm(model=model, max_tokens=self.max_tokens)
 
     def _build_anthropic(self):
         """Use the native Anthropic SDK driver — direct Messages API."""
@@ -218,8 +234,11 @@ class ModelConfig:
         if self.base_url:
             os.environ["ANTHROPIC_BASE_URL"] = self.base_url
 
-        _cfg_logger.info("Native Anthropic driver: provider=%s model=%s", self.provider, model)
-        return AnthropicLlm(model=model)
+        _cfg_logger.info(
+            "Native Anthropic driver: provider=%s model=%s max_tokens=%d",
+            self.provider, model, self.max_tokens,
+        )
+        return AnthropicLlm(model=model, max_tokens=self.max_tokens)
 
     def _build_gemini(self):
         """Use the native Google GenAI driver — direct Gemini API."""
