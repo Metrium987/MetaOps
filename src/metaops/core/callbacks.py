@@ -95,11 +95,11 @@ async def before_tool_callback(
 # ── After-tool ────────────────────────────────────────────────────────────────
 
 async def after_tool_callback(
-    tool: BaseTool, args: dict[str, Any], tool_context: ToolContext, result: dict
+    tool: BaseTool, args: dict[str, Any], tool_context: ToolContext, tool_response: dict
 ) -> Optional[dict]:
     """Log tool results at debug level."""
     tool_name = tool.name
-    status = result.get("status", "?") if isinstance(result, dict) else "raw"
+    status = tool_response.get("status", "?") if isinstance(tool_response, dict) else "raw"
     logger.debug("TOOL [%s] -> status=%s", tool_name, status)
     return None  # None = keep original result
 

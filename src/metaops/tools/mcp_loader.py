@@ -83,6 +83,18 @@ def load_mcp_toolsets(config_path: Path | str | None = None) -> list[McpToolset]
     return toolsets
 
 
+def _env_looks_valid(env: dict) -> tuple[bool, str]:
+    """Return (ok, reason) — skip the server if any env var is empty or a placeholder."""
+    for key, value in env.items():
+        if not value or not str(value).strip():
+            return False, f"env var {key} is empty"
+        val = str(value).strip()
+        # Common placeholder patterns: "...", "xxx", "<token>", "YOUR_*", "sk-...", "ghp_..."
+        if val.endswith("...") or val.startswith("<") or val.upper().startswith("YOUR_"):
+            return False, f"env var {key} looks like a placeholder ({val!r})"
+    return True, ""
+
+
 def _build_toolset(name: str, cfg: dict) -> McpToolset | None:
     if "command" in cfg:
         command = cfg["command"]
@@ -94,6 +106,16 @@ def _build_toolset(name: str, cfg: dict) -> McpToolset | None:
             )
             return None
         env = cfg.get("env") or {}
+        # Skip servers whose required env vars are missing or placeholder
+        if env:
+            ok, reason = _env_looks_valid(env)
+            if not ok:
+                logger.warning(
+                    "MCP server '%s' skipped — %s "
+                    "(set the real value in mcp_servers.json or .env)",
+                    name, reason,
+                )
+                return None
         merged_env = {**os.environ, **env} if env else None
         params = StdioConnectionParams(
             server_params=StdioServerParameters(
