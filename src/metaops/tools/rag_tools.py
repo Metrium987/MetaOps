@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from google.adk.tools import FunctionTool, ToolContext
 from metaops.memory.vector_service import HybridVectorMemoryService
 
@@ -19,25 +20,39 @@ async def ingest_file_dependency(file_path: str, description: str, tool_context:
     if user_role == "guest":
         return {"status": "error", "message": "Access denied: guests are not allowed to ingest file dependencies."}
 
-    # Prevent directory traversal / out-of-workspace file leakage
-    workspace_root = os.path.abspath(os.getcwd())
-    abs_path = os.path.abspath(file_path)
-    if not abs_path.startswith(workspace_root):
+    # Prevent directory traversal / out-of-workspace file leakage. resolve()
+    # also collapses ".." segments and follows symlinks, so a symlink planted
+    # inside the workspace that points outside it is caught too — a plain
+    # string-prefix check (e.g. abs_path.startswith(workspace_root)) is not:
+    # it would let "/workspace-evil/x" pass a check against "/workspace".
+    workspace_root = Path.cwd().resolve()
+    try:
+        abs_path = Path(file_path).resolve()
+    except (OSError, RuntimeError):
+        return {"status": "error", "message": f"Invalid file path: {file_path}"}
+    if not abs_path.is_relative_to(workspace_root):
         return {"status": "error", "message": "Access denied: cannot ingest files outside the workspace directory."}
 
     if not _memory_service:
         return {"status": "error", "message": "Memory service not initialized."}
-    if not os.path.exists(abs_path):
+    if not abs_path.exists():
         return {"status": "error", "message": f"File not found: {file_path}"}
+
+    content = abs_path.read_text(encoding='utf-8', errors='ignore')
         
-    with open(abs_path, 'r', encoding='utf-8', errors='ignore') as f:
-        content = f.read()
-        
+    # ADK has no public app_name accessor on ToolContext (only user_id) —
+    # _invocation_context.app_name is what ADK's own Context methods use internally.
+    app_name = tool_context._invocation_context.app_name
+    user_id = tool_context.user_id
+
     chunk_size = 1000
     chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
     ids = [f"{os.path.basename(file_path)}_{i}" for i in range(len(chunks))]
-    metadatas = [{"file": abs_path, "description": description, "chunk": i} for i in range(len(chunks))]
-    
+    metadatas = [
+        {"file": str(abs_path), "description": description, "chunk": i, "app_name": app_name, "user_id": user_id}
+        for i in range(len(chunks))
+    ]
+
     _memory_service.semantic.add(documents=chunks, metadatas=metadatas, ids=ids)
     return {"status": "success", "message": f"Indexed {len(chunks)} chunks from {file_path} into Semantic Memory."}
 

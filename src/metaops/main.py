@@ -3,6 +3,8 @@ import asyncio
 import logging
 import sys
 
+logger = logging.getLogger(__name__)
+
 try:
     from importlib.metadata import version as _pkg_version
     __version__ = _pkg_version("metaops")
@@ -61,6 +63,24 @@ examples:
     return parser
 
 
+async def _get_or_create_session(session_service, *, app_name, user_id, session_id, state):
+    """Like create_session, but idempotent across process restarts.
+
+    ADK's SqliteSessionService raises AlreadyExistsError for a session_id
+    that's already on disk (unlike the old hand-rolled INSERT OR IGNORE
+    service), and these two callers use fixed, well-known session ids that
+    are (re)created on every startup.
+    """
+    from google.adk.errors.already_exists_error import AlreadyExistsError
+
+    try:
+        await session_service.create_session(
+            app_name=app_name, user_id=user_id, session_id=session_id, state=state,
+        )
+    except AlreadyExistsError:
+        pass
+
+
 async def main(args: argparse.Namespace):
     from metaops.core.root import create_runner, session_service
     from metaops.gateway.session_manager import SessionManager
@@ -91,13 +111,15 @@ async def main(args: argparse.Namespace):
     registry = GatewayRegistry()
     delivery_service = DeliveryService(registry, telegram_token=config.telegram_bot_token)
 
-    await session_service.create_session(
+    await _get_or_create_session(
+        session_service,
         app_name="metaops_enterprise",
         user_id="local_cli_user",
         session_id="metaops_session_local_cli_user",
         state={"user:role": config.default_cli_role, "user:name": "local_user"},
     )
-    await session_service.create_session(
+    await _get_or_create_session(
+        session_service,
         app_name="metaops_enterprise",
         user_id="system_cron",
         session_id="cron_nightly_audit",
@@ -136,6 +158,7 @@ async def main(args: argparse.Namespace):
                 token=config.telegram_bot_token,
                 session_service=session_service,
                 default_role=config.default_telegram_role,
+                allowed_user_ids=config.telegram_allowed_user_ids,
             )
             registry.register("telegram", telegram_bridge)
             registry.set_active("telegram", True)
@@ -154,6 +177,24 @@ async def main(args: argparse.Namespace):
             cron_scheduler.shutdown()
         if telegram_bridge:
             await telegram_bridge.stop()
+        await _close_mcp_toolsets(runner)
+
+
+async def _close_mcp_toolsets(runner) -> None:
+    """Shut down MCP server sessions/subprocesses started by create_runner().
+
+    Without this, the stdio MCP servers (subprocesses) loaded once at
+    startup are never explicitly stopped and rely entirely on the OS
+    reaping them when the parent process exits.
+    """
+    from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
+
+    for tool in runner.agent.tools:
+        if isinstance(tool, McpToolset):
+            try:
+                await tool.close()
+            except Exception as exc:
+                logger.warning("Failed to close MCP toolset cleanly: %s", exc)
 
 
 def run():

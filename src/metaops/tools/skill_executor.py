@@ -1,8 +1,8 @@
 import shlex
-import os
 from google.adk.tools import FunctionTool, ToolContext
 from metaops.backends.local import LocalTerminalBackend
 from metaops.memory.database import MemoryDatabase
+from metaops.tools._shell_guard import check_command_allowed
 
 _db = MemoryDatabase()
 _backend = LocalTerminalBackend()
@@ -12,23 +12,25 @@ async def execute_skill(skill_name: str, arguments: str = "", tool_context: Tool
     procedure = await _db.get_skill_procedure(skill_name)
     if not procedure:
         return {"status": "error", "message": f"Skill '{skill_name}' not found."}
-    
-    command = f"{procedure} {arguments}".strip()
-    
+
+    # `arguments` is caller-supplied free text — shell-quote each token before
+    # splicing it into the command string, otherwise shell metacharacters in
+    # it (`;`, `|`, `$(...)`, backticks...) would be interpreted as part of
+    # the shell command rather than literal argument text (shell injection).
+    try:
+        arg_tokens = shlex.split(arguments) if arguments else []
+    except ValueError:
+        return {"status": "error", "message": "Could not parse skill arguments."}
+    safe_arguments = " ".join(shlex.quote(tok) for tok in arg_tokens)
+    command = f"{procedure} {safe_arguments}".strip()
+
     user_role = "guest"
     if tool_context and tool_context.state:
         user_role = tool_context.state.get("user:role", "guest")
 
-    if user_role != "admin":
-        try:
-            tokens = shlex.split(command)
-            forbidden = {"rm", "sudo", "mkfs", "format", "dd"}
-            for tok in tokens:
-                base_tok = os.path.basename(tok.replace("\\", "/")).lower()
-                if any(base_tok.startswith(f) for f in forbidden):
-                    return {"status": "error", "message": "Insufficient permissions to execute sensitive commands in skill execution."}
-        except ValueError:
-            return {"status": "error", "message": "Skill command parsing failed. Rejected for security reasons."}
+    error = check_command_allowed(command, user_role)
+    if error:
+        return {"status": "error", "message": error}
 
     output_buffer = []
     async for chunk in _backend.execute_stream(command):

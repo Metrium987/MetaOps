@@ -37,7 +37,7 @@ thinker_agent = Agent(
         "and tradeoff evaluation. Pass the full problem statement and all relevant context "
         "(code snippets, error messages, constraints). Returns a structured analysis and recommendation."
     ),
-    model=config.coordinator.to_litellm(),
+    model=config.coordinator.to_model(),
     instruction=_THINKER_INSTRUCTION,
 )
 

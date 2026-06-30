@@ -1,13 +1,12 @@
+import asyncio
 import glob
 import logging
 import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
 from google.adk.agents import Agent
-from google.adk.workflow import Workflow
 from google.adk.tools import FunctionTool
-from google.adk.runners import Runner
-from metaops.memory.session_service import SQLiteSessionService
+from metaops.workflows.agent_runner import run_agent_once
 from metaops.config import MetaOpsConfig
 
 logger = logging.getLogger(__name__)
@@ -20,8 +19,7 @@ config = MetaOpsConfig()
 _IGNORE_DIRS = {"__pycache__", ".venv", "venv", "node_modules", ".git", "dist", "build", ".mypy_cache"}
 
 
-def list_source_files(directory: str = "src", extensions: str = ".py,.ts,.js") -> dict:
-    """List all source files in a directory tree for audit."""
+def _list_source_files(directory: str, extensions: str) -> dict:
     ext_list = [e.strip() for e in extensions.split(",")]
     files: list[str] = []
     for ext in ext_list:
@@ -33,8 +31,12 @@ def list_source_files(directory: str = "src", extensions: str = ".py,.ts,.js") -
     return {"files": sorted(filtered)[:150], "total": len(filtered)}
 
 
-def read_source_file(path: str) -> dict:
-    """Read a source file for code quality analysis."""
+async def list_source_files(directory: str = "src", extensions: str = ".py,.ts,.js") -> dict:
+    """List all source files in a directory tree for audit."""
+    return await asyncio.to_thread(_list_source_files, directory, extensions)
+
+
+def _read_source_file(path: str) -> dict:
     try:
         content = Path(path).read_text(encoding="utf-8", errors="replace")
         return {"path": path, "content": content[:8000], "lines": content.count("\n")}
@@ -42,8 +44,12 @@ def read_source_file(path: str) -> dict:
         return {"path": path, "error": str(exc)}
 
 
-def read_project_config() -> dict:
-    """Read project configuration files to audit dependencies and settings."""
+async def read_source_file(path: str) -> dict:
+    """Read a source file for code quality analysis."""
+    return await asyncio.to_thread(_read_source_file, path)
+
+
+def _read_project_config() -> dict:
     result: dict[str, str] = {}
     for fname in ["pyproject.toml", "setup.py", "requirements.txt", "package.json"]:
         p = Path(fname)
@@ -52,14 +58,12 @@ def read_project_config() -> dict:
     return result if result else {"error": "No project config files found"}
 
 
-def run_static_analysis(tool: str, target: str = ".") -> dict:
-    """Run a static analysis or security tool.
+async def read_project_config() -> dict:
+    """Read project configuration files to audit dependencies and settings."""
+    return await asyncio.to_thread(_read_project_config)
 
-    Supported tools:
-      bandit    — Python security linter (OWASP checks)
-      pip-audit — Python dependency vulnerability scanner
-      pylint    — Python code quality checker
-    """
+
+def _run_static_analysis(tool: str, target: str) -> dict:
     valid = {"bandit", "pip-audit", "pylint"}
     if tool not in valid:
         return {"error": f"Unknown tool '{tool}'. Valid: {valid}"}
@@ -90,8 +94,18 @@ def run_static_analysis(tool: str, target: str = ".") -> dict:
         return {"tool": tool, "error": str(exc)}
 
 
-def check_env_secrets() -> dict:
-    """Scan source files for potential hardcoded secrets and dangerous patterns."""
+async def run_static_analysis(tool: str, target: str = ".") -> dict:
+    """Run a static analysis or security tool.
+
+    Supported tools:
+      bandit    — Python security linter (OWASP checks)
+      pip-audit — Python dependency vulnerability scanner
+      pylint    — Python code quality checker
+    """
+    return await asyncio.to_thread(_run_static_analysis, tool, target)
+
+
+def _check_env_secrets() -> dict:
     dangerous_patterns = [
         ("hardcoded_key",    r'(api_key|secret|password|token)\s*=\s*["\'][^"\']{8,}["\']'),
         ("eval_usage",       r'\beval\s*\('),
@@ -130,6 +144,11 @@ def check_env_secrets() -> dict:
     }
 
 
+async def check_env_secrets() -> dict:
+    """Scan source files for potential hardcoded secrets and dangerous patterns."""
+    return await asyncio.to_thread(_check_env_secrets)
+
+
 list_files_tool     = FunctionTool(func=list_source_files)
 read_file_tool      = FunctionTool(func=read_source_file)
 project_config_tool = FunctionTool(func=read_project_config)
@@ -140,7 +159,9 @@ env_secrets_tool    = FunctionTool(func=check_env_secrets)
 # Auditor agent
 # ---------------------------------------------------------------------------
 
-_AUDITOR_INSTRUCTION = f"""You are a senior security and software quality auditor. Today: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}.
+def _auditor_instruction(callback_context) -> str:
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    return f"""You are a senior security and software quality auditor. Today: {today}.
 
 Perform a thorough audit in this exact sequence:
 
@@ -188,8 +209,8 @@ Priority fixes: [top 3 actions to take now]"""
 
 code_auditor_agent = Agent(
     name="code_auditor",
-    model=config.auditor.to_litellm(),
-    instruction=_AUDITOR_INSTRUCTION,
+    model=config.auditor.to_model(),
+    instruction=_auditor_instruction,
     tools=[
         list_files_tool,
         read_file_tool,
@@ -197,21 +218,6 @@ code_auditor_agent = Agent(
         static_analysis_tool,
         env_secrets_tool,
     ],
-)
-
-# ---------------------------------------------------------------------------
-# Workflow
-# ---------------------------------------------------------------------------
-
-background_audit_workflow = Workflow(
-    name="background_audit",
-    edges=[("START", code_auditor_agent)],
-)
-
-background_runner = Runner(
-    node=background_audit_workflow,
-    app_name="metaops_background",
-    session_service=SQLiteSessionService(db_path=config.sessions_db),
 )
 
 # ---------------------------------------------------------------------------
@@ -234,27 +240,9 @@ async def run_audit(scope: str = "full") -> dict:
             report   — full audit report in markdown
             scope    — echo of requested scope
     """
-    import uuid
-    from google.genai import types as gtypes
-
     prompt = f"Run a {scope} audit of this project."
-    session = await background_runner.session_service.create_session(
-        app_name="metaops_background",
-        user_id="auditor",
-        session_id=str(uuid.uuid4()),
-    )
-    parts: list[str] = []
-    async for event in background_runner.run_async(
-        user_id="auditor",
-        session_id=session.id,
-        new_message=gtypes.Content(parts=[gtypes.Part(text=prompt)]),
-    ):
-        if event.content:
-            for part in event.content.parts or []:
-                if part.text:
-                    parts.append(part.text)
-
-    return {"report": "\n".join(parts), "scope": scope}
+    report = await run_agent_once(code_auditor_agent, prompt)
+    return {"report": report, "scope": scope}
 
 
 audit_tool = FunctionTool(func=run_audit)

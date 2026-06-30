@@ -1,12 +1,13 @@
 import logging
+from typing import Optional
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from google.adk.runners import Runner
 from google.adk.events import Event
 from google.genai import types
 from metaops.gateway.base import BaseGateway
+from google.adk.sessions import BaseSessionService
 from metaops.gateway.session_manager import SessionManager
-from metaops.memory.session_service import SQLiteSessionService
 
 logger = logging.getLogger(__name__)
 
@@ -17,14 +18,26 @@ class TelegramBridge(BaseGateway):
         runner: Runner,
         session_manager: SessionManager,
         token: str,
-        session_service: SQLiteSessionService = None,
+        session_service: BaseSessionService = None,
         default_role: str = "admin",
+        allowed_user_ids: Optional[set[str]] = None,
     ):
         self.runner = runner
         self.session_manager = session_manager
         self.token = token
         self._session_service = session_service
         self.default_role = default_role
+        # None = no allowlist configured (open to anyone who can message the
+        # bot — fine for a private dev bot, but anyone with the bot's
+        # username can reach it regardless of "local network" intentions).
+        # Set METAOPS_TELEGRAM_ALLOWED_USERS to restrict.
+        self.allowed_user_ids = allowed_user_ids
+        if self.allowed_user_ids is None:
+            logger.warning(
+                "No METAOPS_TELEGRAM_ALLOWED_USERS configured — this bot will "
+                "respond to any Telegram user who messages it, with role=%s.",
+                default_role,
+            )
         self._initialized_sessions: set = set()
         self.application = Application.builder().token(token).build()
 
@@ -52,7 +65,7 @@ class TelegramBridge(BaseGateway):
         user_id = str(update.effective_user.id)
         session_id = self.session_manager.get_session_id("telegram", user_id)
         self._initialized_sessions.discard(session_id)
-        self.session_manager._user_to_session.pop(user_id, None)
+        self.session_manager.clear_session(user_id)
         if self._session_service:
             try:
                 await self._session_service.delete_session(
@@ -85,6 +98,12 @@ class TelegramBridge(BaseGateway):
         user_id = str(user.id)
         chat_id = update.effective_chat.id
         user_input = update.message.text
+
+        if self.allowed_user_ids is not None and user_id not in self.allowed_user_ids:
+            logger.warning("Rejected message from non-allowlisted Telegram user_id=%s", user_id)
+            await context.bot.send_message(chat_id=chat_id, text="Access denied.")
+            return
+
         session_id = self.session_manager.get_session_id("telegram", user_id)
 
         if self.session_manager.is_busy(session_id):

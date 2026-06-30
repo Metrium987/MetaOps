@@ -19,3 +19,6 @@ class SessionManager:
         else:
             self._busy_sessions.discard(session_id)
 
+    def clear_session(self, user_id: str) -> None:
+        self._user_to_session.pop(user_id, None)
+

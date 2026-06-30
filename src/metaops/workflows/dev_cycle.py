@@ -8,12 +8,11 @@ Three-stage pipeline:
 Exposed as FunctionTool for the coordinator agent.
 """
 
-import os
-import shlex
 import logging
 from google.adk.agents import Agent
 from google.adk.tools import FunctionTool, ToolContext
 from metaops.config import MetaOpsConfig
+from metaops.tools._shell_guard import check_command_allowed
 from metaops.workflows.agent_runner import run_agent_once
 from metaops.workflows.vibe_coding import vibe_code
 
@@ -40,7 +39,7 @@ Do not write any code — plans only."""
 
 _planner_agent = Agent(
     name="planner",
-    model=config.coordinator.to_litellm(),
+    model=config.coordinator.to_model(),
     instruction=_PLANNER_INSTRUCTION,
 )
 
@@ -93,30 +92,16 @@ async def full_dev_cycle(
         if tool_context and tool_context.state:
             user_role = tool_context.state.get("user:role", "guest")
 
-        if user_role != "admin":
-            try:
-                tokens = shlex.split(test_command)
-                forbidden = {"rm", "sudo", "mkfs", "format", "dd"}
-                for tok in tokens:
-                    base_tok = os.path.basename(tok.replace("\\", "/")).lower()
-                    if any(base_tok.startswith(f) for f in forbidden):
-                        return {
-                            "plan": "Blocked",
-                            "code": "",
-                            "approved": False,
-                            "revisions": 0,
-                            "test_output": "Error: Insufficient permissions to execute sensitive commands.",
-                            "tests_passed": False,
-                        }
-            except ValueError:
-                return {
-                    "plan": "Blocked",
-                    "code": "",
-                    "approved": False,
-                    "revisions": 0,
-                    "test_output": "Error: Test command parsing failed.",
-                    "tests_passed": False,
-                }
+        error = check_command_allowed(test_command, user_role)
+        if error:
+            return {
+                "plan": "Blocked",
+                "code": "",
+                "approved": False,
+                "revisions": 0,
+                "test_output": f"Error: {error}",
+                "tests_passed": False,
+            }
 
     # Stage 1: Plan
     plan = await run_agent_once(_planner_agent, task)

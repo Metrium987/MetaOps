@@ -55,13 +55,13 @@ VERDICT: NEEDS_WORK"""
 
 coder_agent = Agent(
     name="coder_agent",
-    model=config.workstream.to_litellm(),
+    model=config.workstream.to_model(),
     instruction=_CODER_INSTRUCTION,
 )
 
 reviewer_agent = Agent(
     name="reviewer_agent",
-    model=config.workstream.to_litellm(),
+    model=config.workstream.to_model(),
     instruction=_REVIEWER_INSTRUCTION,
 )
 

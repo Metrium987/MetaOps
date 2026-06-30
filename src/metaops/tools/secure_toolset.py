@@ -4,27 +4,17 @@ from google.adk.tools import BaseTool, FunctionTool
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.tools.tool_context import ToolContext
 from metaops.backends.local import LocalTerminalBackend
+from metaops.tools._shell_guard import check_command_allowed
 
 _backend = LocalTerminalBackend()
 
-import shlex
-
-import os
 
 async def execute_secure_command(command: str, tool_context: ToolContext) -> dict:
     user_role = tool_context.state.get("user:role", "guest")
-    if user_role != "admin":
-        try:
-            tokens = shlex.split(command)
-            forbidden = {"rm", "sudo", "mkfs", "format", "dd"}
-            for tok in tokens:
-                base_tok = os.path.basename(tok.replace("\\", "/")).lower()
-                if any(base_tok.startswith(f) for f in forbidden):
-                    return {"status": "error", "message": "Insufficient permissions to execute sensitive commands."}
-        except ValueError:
-            return {"status": "error", "message": "Command parsing failed. Rejected for security reasons."}
-    
-    
+    error = check_command_allowed(command, user_role)
+    if error:
+        return {"status": "error", "message": error}
+
     output = []
     async for chunk in _backend.execute_stream(command):
         output.append(chunk)

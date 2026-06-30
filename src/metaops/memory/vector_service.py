@@ -42,7 +42,12 @@ class HybridVectorMemoryService(BaseMemoryService):
                 text = "\n".join([p.text for p in event.content.parts if p.text])
                 if text.strip():
                     documents.append(text)
-                    metadatas.append({"session_id": session.id, "author": event.author})
+                    metadatas.append({
+                        "session_id": session.id,
+                        "author": event.author,
+                        "app_name": session.app_name,
+                        "user_id": session.user_id,
+                    })
                     ids.append(str(uuid.uuid4()))
         if documents:
             self.episodic.add(documents=documents, metadatas=metadatas, ids=ids)
@@ -57,13 +62,22 @@ class HybridVectorMemoryService(BaseMemoryService):
             logger.warning("Failed to generate embedding for memory search: %s", e)
             return SearchMemoryResponse(memories=[])
 
+        # Scope every collection query to this app/user — without this filter,
+        # any user's recall_past_context/preload_memory call returns every
+        # other user's indexed conversation history (cross-user data leak).
+        scope_filter = {"$and": [{"app_name": app_name}, {"user_id": user_id}]}
+
         for collection, label in [
             (self.episodic,   "Past Context"),
             (self.semantic,   "File Dependency"),
             (self.procedural, "Skill"),
         ]:
             try:
-                res = collection.query(query_embeddings=query_embeddings, n_results=3)
+                res = collection.query(
+                    query_embeddings=query_embeddings,
+                    n_results=3,
+                    where=scope_filter,
+                )
                 for doc in res['documents'][0]:
                     results.append(MemoryEntry(
                         content=types.Content(parts=[types.Part(text=f"[{label}] {doc}")]),

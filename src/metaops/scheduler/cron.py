@@ -23,7 +23,10 @@ class MetaOpsCronScheduler:
             final_output = []
             async for event in self.runner.run_async(user_id="system_cron", session_id=session_id, new_message=content):
                 if event.is_final_response() and event.content and event.content.parts:
-                    text = event.content.parts[0].text
+                    text = "".join([
+                        part.text for part in event.content.parts
+                        if part.text and not getattr(part, "thought", False)
+                    ])
                     if text: final_output.append(text)
             if final_output: await self.delivery_callback(session_id, "\n".join(final_output))
         except Exception as e:

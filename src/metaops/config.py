@@ -93,11 +93,15 @@ def resolve_provider(provider: str) -> tuple[Optional[str], Optional[str]]:
     return api_key, base_url
 
 
-# Providers natively supported by LiteLLM — no openai/ prefix needed
+# Providers natively supported by LiteLLM — no openai/ prefix needed.
+# Only consulted by _build_litellm(), the final fallback in to_model(); any
+# provider already claimed by _ANTHROPIC_NATIVE_PROVIDERS, _GEMINI_NATIVE_PROVIDERS
+# or _OPENAI_COMPATIBLE_PROVIDERS earlier in to_model() never reaches it, so
+# listing those here too would be dead/misleading (e.g. ollama, openrouter).
 _LITELLM_NATIVE_PROVIDERS = {
     "openai", "anthropic", "gemini", "groq", "mistral", "cohere",
     "perplexity", "togetherai", "fireworks", "nvidia", "huggingface",
-    "xai", "deepseek", "ollama", "azure", "openrouter",
+    "xai", "deepseek", "azure",
 }
 
 # Providers whose API is OpenAI-compatible (/v1/chat/completions)
@@ -169,11 +173,18 @@ class ModelConfig:
         """Use the native OpenAI SDK driver — no LiteLLM overhead."""
         from google.adk.labs.openai import OpenAILlm
 
-        # Strip any litellm-style prefix (openai/, openrouter/, etc.)
+        # Strip litellm-style prefixes that the upstream API itself doesn't
+        # expect. NOTE: OpenRouter's model identifiers genuinely include the
+        # "vendor/" segment (e.g. "openai/gpt-4o") — that's not a litellm
+        # artifact, so it must NOT be stripped or OpenRouter rejects it.
         model = self.model
-        for prefix in ("openai/", "openrouter/"):
-            if model.startswith(prefix):
-                model = model[len(prefix):]
+        if self.provider == "openai" and model.startswith("openai/"):
+            model = model[len("openai/"):]
+        elif self.provider in _LOCAL_PROVIDERS:
+            for prefix in ("ollama/", "lmstudio/"):
+                if model.startswith(prefix):
+                    model = model[len(prefix):]
+                    break
 
         # The OpenAI SDK client is created lazily (@cached_property) and reads
         # OPENAI_API_KEY / OPENAI_BASE_URL at that moment, so we must set them
@@ -230,11 +241,6 @@ class ModelConfig:
             kwargs["api_base"] = self.base_url
         return LiteLlm(model=model, **kwargs)
 
-    # ── Backward compatibility ──
-    def to_litellm(self):
-        """Legacy alias — now routes to the best native driver."""
-        return self.to_model()
-
 
 class MetaOpsConfig:
     def __init__(self):
@@ -242,15 +248,26 @@ class MetaOpsConfig:
         self.cron_delivery_target: str = os.getenv("METAOPS_CRON_DELIVERY_TARGET", "cli")
         self.mcp_server_url: str = os.getenv("MCP_SERVER_URL", "http://localhost:8000/sse")
 
+        # Comma-separated Telegram numeric user IDs allowed to use the bot.
+        # Unset = open to anyone who can message the bot (fine for a private
+        # dev bot, but note a Telegram bot is reachable by anyone who knows
+        # its username — "local network" does not limit who can message it).
+        _allowed = os.getenv("METAOPS_TELEGRAM_ALLOWED_USERS", "")
+        self.telegram_allowed_user_ids: Optional[set[str]] = (
+            {u.strip() for u in _allowed.split(",") if u.strip()} or None
+        )
+
         # Default role configs (can be overridden in .env)
         self.default_cli_role: str = os.getenv("METAOPS_DEFAULT_CLI_ROLE", "admin")
-        self.default_cron_role: str = os.getenv("METAOPS_DEFAULT_CRON_ROLE", "admin")
+        # Unsupervised nightly job — non-admin by default so a misbehaving
+        # prompt/tool can't get unrestricted shell access while no one is
+        # watching. Override explicitly if the audit job needs more.
+        self.default_cron_role: str = os.getenv("METAOPS_DEFAULT_CRON_ROLE", "user")
         self.default_telegram_role: str = os.getenv("METAOPS_DEFAULT_TELEGRAM_ROLE", "admin")
 
         # Per-agent model configs
         self.coordinator  = ModelConfig("METAOPS_COORDINATOR_MODEL",  "METAOPS_COORDINATOR_PROVIDER",  "openai/gpt-4o")
         self.workstream   = ModelConfig("METAOPS_WORKSTREAM_MODEL",   "METAOPS_WORKSTREAM_PROVIDER",   "openai/gpt-4o-mini")
-        self.approver     = ModelConfig("METAOPS_APPROVER_MODEL",     "METAOPS_APPROVER_PROVIDER",     "openai/gpt-4o-mini")
         self.auditor      = ModelConfig("METAOPS_AUDITOR_MODEL",      "METAOPS_AUDITOR_PROVIDER",      "openai/gpt-4o-mini")
 
         # Database paths

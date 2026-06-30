@@ -52,14 +52,14 @@ Be concise. Cite sources inline. Skip sections that have no content."""
 
 researcher_agent = Agent(
     name="researcher",
-    model=config.workstream.to_litellm(),
+    model=config.workstream.to_model(),
     instruction=_RESEARCHER_INSTRUCTION,
     tools=[web_search_tool, web_extract_tool, web_crawl_tool, company_info_tool],
 )
 
 synthesizer_agent = Agent(
     name="synthesizer",
-    model=config.coordinator.to_litellm(),
+    model=config.coordinator.to_model(),
     instruction=_SYNTHESIZER_INSTRUCTION,
 )
 

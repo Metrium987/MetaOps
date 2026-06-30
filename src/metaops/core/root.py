@@ -1,14 +1,15 @@
 import os
+from pathlib import Path
+
 from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.artifacts import FileArtifactService
 from google.adk.code_executors import UnsafeLocalCodeExecutor
+from google.adk.sessions.sqlite_session_service import SqliteSessionService
 
 from google.adk.tools import preload_memory, load_artifacts, request_input
-from metaops.memory.session_service import SQLiteSessionService
 from metaops.memory.vector_service import HybridVectorMemoryService
 from metaops.tools.secure_toolset import SecureMetaOpsToolset
-from metaops.tools.escalation import escalation_tool
 from metaops.tools.workstream import workstream_tool
 from metaops.tools.rag_tools import ingest_file_tool, init_rag_tools
 from metaops.tools.mcp_loader import load_mcp_toolsets
@@ -39,7 +40,8 @@ from metaops.config import MetaOpsConfig
 
 config = MetaOpsConfig()
 
-session_service = SQLiteSessionService(db_path=config.sessions_db)
+Path(config.sessions_db).parent.mkdir(parents=True, exist_ok=True)
+session_service = SqliteSessionService(db_path=config.sessions_db)
 memory_service = HybridVectorMemoryService(
     db_path=config.vector_db,
     embedding_provider=config.embedding_provider,
@@ -134,32 +136,26 @@ Index a file into memory      → ingest_file_dependency
 Execute a learned skill       → execute_skill
 Code + security audit         → run_audit (bandit + pip-audit + quality scan)
 Need info from user           → request_input (pauses, asks user, resumes — use BEFORE acting on unknowns)
-Destructive / irreversible    → request_human_approval FIRST, always
+Destructive / irreversible    → request_input FIRST, always — message=clear description of the action,
+                                 response_schema={"type": "boolean"}; only proceed if the answer is true
 """
     skills = callback_context.state.get("available_skills", "")
     if skills:
         tool_guide += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nLEARNED SKILLS AVAILABLE\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n{skills}\n"
     return tool_guide
 
-human_approver_agent = Agent(
-    name="human_approver_agent",
-    model=config.approver.to_litellm(),
-    instruction="You are the approval gateway. Present the requested action clearly to the user and wait for explicit confirmation before proceeding.",
-)
-
 def create_runner() -> Runner:
     config.validate_keys()
     mcp_toolsets = load_mcp_toolsets()
     metaops_root = Agent(
         name="metaops_coordinator",
-        model=config.coordinator.to_litellm(),
+        model=config.coordinator.to_model(),
         static_instruction=_STATIC_PROFILE,
         instruction=dynamic_instruction,
         tools=[
             # Execution
             SecureMetaOpsToolset(),
             workstream_tool,
-            escalation_tool,
             # Coding workflows
             vibe_coding_tool,
             full_dev_cycle_tool,
@@ -184,7 +180,6 @@ def create_runner() -> Runner:
             # MCP servers
             *mcp_toolsets,
         ],
-        sub_agents=[human_approver_agent],
         before_agent_callback=auto_inject_memory_callback,
         after_agent_callback=skill_harvest_callback,
         before_tool_callback=before_tool_callback,
