@@ -71,13 +71,36 @@ metaops/
 
 ## Installation
 
+**One command — clones, installs, and configures everything:**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/Metrium987/MetaOps/main/bootstrap.py | python -
+```
+
+On PowerShell (Windows):
+
+```powershell
+irm https://raw.githubusercontent.com/Metrium987/MetaOps/main/bootstrap.py | python -
+```
+
+**Requirements:** Python 3.10+, Git
+
+The script:
+- Clones the repo into `./MetaOps/`
+- `pip install -e .` (all dependencies)
+- Installs `bandit` and `pip-audit` (optional — used by the audit workflow)
+- Creates `./data/` directories
+- Copies `.env.example` → `.env` if no `.env` exists
+
+---
+
+### Manual install
+
 ```bash
 git clone https://github.com/Metrium987/MetaOps.git
 cd MetaOps
 pip install -e .
 ```
-
-**Requirements:** Python 3.10+
 
 ---
 
