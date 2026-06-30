@@ -75,7 +75,7 @@ _PROVIDER_DEFAULTS = {
     "xiaomi":      ("XIAOMI_API_KEY",                  "XIAOMI_BASE_URL",              "https://api.xiaomimimo.com/v1"),
     "tencent":     ("TOKENHUB_API_KEY",                "TOKENHUB_BASE_URL",            "https://tokenhub.tencentmaas.com/v1"),
     # Local / self-hosted
-    "ollama":      (None,                              "OLLAMA_BASE_URL",              "http://localhost:11434"),
+    "ollama":      (None,                              "OLLAMA_BASE_URL",              "http://localhost:11434/v1"),
     "lmstudio":    ("LM_API_KEY",                      "LM_BASE_URL",                  "http://127.0.0.1:1234/v1"),
 }
 
@@ -113,6 +113,10 @@ _OPENAI_COMPATIBLE_PROVIDERS = {
     # Local / self-hosted
     "ollama", "lmstudio",
 }
+
+# Local / self-hosted providers — routed through a hardened OpenAI driver
+# that tolerates missing tool_call id/name (common with small local models)
+_LOCAL_PROVIDERS = {"ollama", "lmstudio"}
 
 # Providers that use the native Anthropic Messages API
 _ANTHROPIC_NATIVE_PROVIDERS = {"anthropic", "minimax"}
@@ -178,6 +182,12 @@ class ModelConfig:
             os.environ["OPENAI_API_KEY"] = self.api_key
         if self.base_url:
             os.environ["OPENAI_BASE_URL"] = self.base_url
+
+        if self.provider in _LOCAL_PROVIDERS:
+            from metaops.core.local_llm_driver import LocalOpenAILlm
+
+            _cfg_logger.info("Hardened local OpenAI driver: provider=%s model=%s", self.provider, model)
+            return LocalOpenAILlm(model=model)
 
         _cfg_logger.info("Native OpenAI driver: provider=%s model=%s", self.provider, model)
         return OpenAILlm(model=model)
