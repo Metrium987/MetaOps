@@ -54,7 +54,24 @@ class SQLiteSessionService(BaseSessionService):
             return Session(app_name=app_name, user_id=user_id, id=session_id, state=state, events=events)
 
     async def list_sessions(self, *, app_name: str, user_id: Optional[str] = None) -> ListSessionsResponse:
-        return ListSessionsResponse(sessions=[])
+        with sqlite3.connect(self.db_path) as conn:
+            if user_id:
+                cursor = conn.execute(
+                    "SELECT session_id, user_id FROM sessions WHERE app_name=? AND user_id=?",
+                    (app_name, user_id),
+                )
+            else:
+                cursor = conn.execute(
+                    "SELECT session_id, user_id FROM sessions WHERE app_name=?",
+                    (app_name,),
+                )
+            rows = cursor.fetchall()
+            sessions = [
+                Session(app_name=app_name, user_id=row[1], id=row[0])
+                for row in rows
+            ]
+            return ListSessionsResponse(sessions=sessions)
+
 
     async def delete_session(self, *, app_name: str, user_id: str, session_id: str) -> None:
         with sqlite3.connect(self.db_path) as conn:

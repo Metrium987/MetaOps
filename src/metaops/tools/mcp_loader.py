@@ -61,22 +61,26 @@ def load_mcp_toolsets(config_path: Path | str | None = None) -> list[McpToolset]
     """
     path = Path(config_path) if config_path else _CONFIG_PATH
 
-    if not path.exists():
-        # Auto-copy from example if available
-        example = path.parent / (path.name + ".example")
-        if example.exists():
-            import shutil as _shutil
-            _shutil.copy(example, path)
-            logger.info("mcp_servers.json created from mcp_servers.json.example — edit it to add your real paths/keys")
-        else:
-            fallback_url = os.getenv("MCP_SERVER_URL", "").strip()
-            if fallback_url:
-                logger.info("mcp_servers.json not found — falling back to MCP_SERVER_URL=%s", fallback_url)
-                return [McpToolset(connection_params=SseConnectionParams(url=fallback_url))]
-            return []
+    try:
+        if not path.exists():
+            # Auto-copy from example if available
+            example = path.parent / (path.name + ".example")
+            if example.exists():
+                import shutil as _shutil
+                _shutil.copy(example, path)
+                logger.info("mcp_servers.json created from mcp_servers.json.example — edit it to add your real paths/keys")
+            else:
+                fallback_url = os.getenv("MCP_SERVER_URL", "").strip()
+                if fallback_url:
+                    logger.info("mcp_servers.json not found — falling back to MCP_SERVER_URL=%s", fallback_url)
+                    return [McpToolset(connection_params=SseConnectionParams(url=fallback_url))]
+                return []
 
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as exc:
+        logger.error("Failed to load mcp_servers.json: %s", exc)
+        return []
 
     toolsets: list[McpToolset] = []
     for name, cfg in data.get("mcpServers", {}).items():
@@ -162,7 +166,7 @@ def _build_toolset(name: str, cfg: dict) -> McpToolset | None:
                 args=expanded_args,
                 env=merged_env,
             ),
-            timeout=cfg.get("timeout", 10.0),
+            timeout=cfg.get("timeout", 30.0),
         )
         logger.debug("MCP stdio '%s': %s %s", name, command, expanded_args)
         return McpToolset(connection_params=params)

@@ -70,7 +70,13 @@ async def skill_harvest_callback(callback_context: CallbackContext):
         name      = match.group(1).strip()
         trigger   = match.group(2).strip()
         procedure = match.group(3).strip()
-        asyncio.create_task(_skill_db.commit_skill(name, trigger, procedure))
+        task = asyncio.create_task(_skill_db.commit_skill(name, trigger, procedure))
+        def log_task_exception(t):
+            try:
+                t.result()
+            except Exception as exc:
+                logger.error("Failed to commit harvested skill: %s", exc)
+        task.add_done_callback(log_task_exception)
         logger.info("Skill harvested and queued for persistence: %s", name)
 
 

@@ -7,7 +7,7 @@ from google.adk.agents import Agent
 from google.adk.workflow import Workflow
 from google.adk.tools import FunctionTool
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
+from metaops.memory.session_service import SQLiteSessionService
 from metaops.config import MetaOpsConfig
 
 logger = logging.getLogger(__name__)
@@ -211,7 +211,7 @@ background_audit_workflow = Workflow(
 background_runner = Runner(
     node=background_audit_workflow,
     app_name="metaops_background",
-    session_service=InMemorySessionService(),
+    session_service=SQLiteSessionService(db_path=config.sessions_db),
 )
 
 # ---------------------------------------------------------------------------

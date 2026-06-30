@@ -7,10 +7,23 @@ from metaops.backends.local import LocalTerminalBackend
 
 _backend = LocalTerminalBackend()
 
+import shlex
+
+import os
+
 async def execute_secure_command(command: str, tool_context: ToolContext) -> dict:
-    user_role = tool_context.state.get("user:role", "admin")
-    if user_role != "admin" and any(cmd in command for cmd in ["rm ", "sudo ", "mkfs"]):
-        return {"status": "error", "message": "Insufficient permissions."}
+    user_role = tool_context.state.get("user:role", "guest")
+    if user_role != "admin":
+        try:
+            tokens = shlex.split(command)
+            forbidden = {"rm", "sudo", "mkfs", "format", "dd"}
+            for tok in tokens:
+                base_tok = os.path.basename(tok.replace("\\", "/")).lower()
+                if any(base_tok.startswith(f) for f in forbidden):
+                    return {"status": "error", "message": "Insufficient permissions to execute sensitive commands."}
+        except ValueError:
+            return {"status": "error", "message": "Command parsing failed. Rejected for security reasons."}
+    
     
     output = []
     async for chunk in _backend.execute_stream(command):

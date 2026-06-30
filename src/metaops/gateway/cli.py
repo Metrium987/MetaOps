@@ -11,7 +11,11 @@ class CLIBridge(PlatformBridge):
     def __init__(self, runner: Runner, session_manager: SessionManager):
         self.runner = runner
         self.session_manager = session_manager
-        self.session = PromptSession(history=InMemoryHistory())
+        self._is_interactive = True
+        try:
+            self.session = PromptSession(history=InMemoryHistory())
+        except Exception:
+            self._is_interactive = False
         self.user_id = "local_cli_user"
 
     async def start(self):
@@ -19,7 +23,12 @@ class CLIBridge(PlatformBridge):
         session_id = self.session_manager.get_session_id("cli", self.user_id)
         while True:
             try:
-                user_input = await self.session.prompt_async("MetaOps> ", multiline=False)
+                if self._is_interactive:
+                    user_input = await self.session.prompt_async("MetaOps> ", multiline=False)
+                else:
+                    loop = asyncio.get_running_loop()
+                    user_input = await loop.run_in_executor(None, input, "MetaOps> ")
+                
                 if user_input.strip().lower() in ["/exit", "/quit"]: break
                 if not user_input.strip(): continue
                 
@@ -32,3 +41,4 @@ class CLIBridge(PlatformBridge):
             except EOFError: break
 
     async def send_event(self, event: Event): pass
+
