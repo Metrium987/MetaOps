@@ -1,6 +1,7 @@
+import os
 from google.adk.agents import Agent
 from google.adk.runners import Runner
-from google.adk.artifacts import InMemoryArtifactService
+from google.adk.artifacts import FileArtifactService
 from google.adk.code_executors import UnsafeLocalCodeExecutor
 from google.adk.planners import BuiltInPlanner
 from google.adk.tools import preload_memory, load_memory
@@ -25,6 +26,7 @@ from metaops.tools.web_search import (
 )
 from metaops.core.callbacks import auto_inject_memory_callback, skill_harvest_callback, init_callbacks
 from metaops.tools.skill_executor import skill_executor_tool
+from metaops.tools.memory_tools import skill_saver_tool, memory_search_tool
 from metaops.config import MetaOpsConfig
 
 config = MetaOpsConfig()
@@ -37,7 +39,7 @@ memory_service = HybridVectorMemoryService(
     embedding_api_key=config.embedding_api_key,
     embedding_base_url=config.embedding_base_url,
 )
-artifact_service = InMemoryArtifactService()
+artifact_service = FileArtifactService(base_dir=os.getenv("METAOPS_ARTIFACTS_DIR", "./data/artifacts"))
 
 init_rag_tools(memory_service)
 init_callbacks(memory_service)
@@ -151,8 +153,10 @@ def create_runner() -> Runner:
             # Memory & skills
             preload_memory,
             load_memory,
+            memory_search_tool,
             ingest_file_tool,
             skill_executor_tool,
+            skill_saver_tool,
             # MCP servers
             *mcp_toolsets,
         ],
