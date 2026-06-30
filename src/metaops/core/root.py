@@ -4,7 +4,7 @@ from google.adk.runners import Runner
 from google.adk.artifacts import FileArtifactService
 from google.adk.code_executors import UnsafeLocalCodeExecutor
 
-from google.adk.tools import preload_memory, load_memory, load_artifacts, request_input
+from google.adk.tools import preload_memory, load_artifacts, request_input
 from metaops.memory.session_service import SQLiteSessionService
 from metaops.memory.vector_service import HybridVectorMemoryService
 from metaops.tools.secure_toolset import SecureMetaOpsToolset
@@ -128,7 +128,7 @@ Deep web research             → deep_research ⚠️ REQUIRES WORKFLOW GATE
 Quick web lookup              → web_search / web_extract / web_crawl / web_map
 Company intelligence          → company_info
 Hard decision / tradeoff      → thinker (pass full problem + all context)
-Search past conversations     → load_memory (explicit query) — preload_memory runs automatically
+Search past conversations     → recall_past_context (explicit query) — preload_memory runs automatically
 Load saved artifacts          → load_artifacts (images, PDFs, reports saved in this session)
 Index a file into memory      → ingest_file_dependency
 Execute a learned skill       → execute_skill
@@ -175,7 +175,6 @@ def create_runner() -> Runner:
             audit_tool,
             # Memory, artifacts & skills
             preload_memory,
-            load_memory,
             load_artifacts,
             request_input,
             memory_search_tool,
