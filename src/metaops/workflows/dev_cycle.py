@@ -81,6 +81,8 @@ async def full_dev_cycle(
             code       — final code (approved or best attempt)
             approved   — True if reviewer approved the code
             revisions  — number of coder→reviewer cycles that ran
+            last_review_feedback — reviewer's last rejection reasons
+                (only present when approved is False)
             test_output — test command output (only present if run_tests=True)
     """
     logger.info("Full dev cycle started: %s", task[:80])
@@ -135,6 +137,8 @@ async def full_dev_cycle(
         "approved": code_result["approved"],
         "revisions": code_result["revisions"],
     }
+    if "last_review_feedback" in code_result:
+        result["last_review_feedback"] = code_result["last_review_feedback"]
 
     # Stage 3: Tests (optional)
     if run_tests:

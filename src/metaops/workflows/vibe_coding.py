@@ -85,6 +85,8 @@ async def vibe_code(task: str) -> dict:
             code     — the final code block (approved or best attempt)
             approved — True only if the reviewer explicitly approved
             revisions — number of coder→reviewer cycles that ran
+            last_review_feedback — reviewer's last rejection reasons
+                (only present when approved is False)
     """
     # Step 1: Initial code generation
     coder_output = await run_agent_once(coder_agent, task)
@@ -107,7 +109,10 @@ async def vibe_code(task: str) -> dict:
             }
 
         # Step 3: Revise based on feedback
-        logger.info("Reviewer rejected — revision %d/%d", revision + 1, MAX_REVISIONS)
+        logger.info(
+            "Reviewer rejected — revision %d/%d — feedback: %s",
+            revision + 1, MAX_REVISIONS, review.strip()[:500],
+        )
         revision_prompt = (
             f"## Original Task\n{task}\n\n"
             f"## Your Previous Code\n{coder_output}\n\n"
@@ -125,6 +130,7 @@ async def vibe_code(task: str) -> dict:
         "code": coder_output,
         "approved": False,
         "revisions": MAX_REVISIONS,
+        "last_review_feedback": review,
     }
 
 

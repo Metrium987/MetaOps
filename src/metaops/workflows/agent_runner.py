@@ -43,11 +43,20 @@ async def run_agent_once(agent: Agent, prompt: str) -> str:
     )
 
     parts: list[str] = []
+    last_error_code = None
+    last_error_message = None
     async for event in runner.run_async(
         user_id=agent.name,
         session_id=session.id,
         new_message=types.Content(parts=[types.Part(text=prompt)]),
     ):
+        if event.error_code or event.error_message:
+            last_error_code = event.error_code
+            last_error_message = event.error_message
+            logger.warning(
+                "Agent '%s' event reported an error: code=%s message=%s",
+                agent.name, last_error_code, last_error_message,
+            )
         if event.content:
             for part in event.content.parts or []:
                 # Skip thinking/reasoning parts
@@ -56,4 +65,10 @@ async def run_agent_once(agent: Agent, prompt: str) -> str:
                 if part.text:
                     parts.append(part.text)
 
-    return "\n".join(parts)
+    output = "\n".join(parts)
+    if not output:
+        raise RuntimeError(
+            f"Agent '{agent.name}' returned no text output "
+            f"(error_code={last_error_code}, error_message={last_error_message})"
+        )
+    return output
