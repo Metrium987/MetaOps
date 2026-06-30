@@ -4,7 +4,8 @@ version = "3.0.0"
 description = "Enterprise-grade AI agent with Persistent Vector Memory OS and RAG, built on ADK 2.0"
 requires-python = ">=3.10"
 dependencies = [
-    "google-adk[extensions]>=2.3.0",
+    "google-adk>=2.3.0",
+    "litellm>=1.83.7,<=1.83.14",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
     "prompt_toolkit>=3.0.0",
