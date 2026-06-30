@@ -28,7 +28,7 @@ def header(msg): print(f"\n{BOLD}{msg}{RESET}")
 
 
 # ── 1. Python version ─────────────────────────────────────────────────────────
-header("1 / 6  Python version")
+header("1 / 7  Python version")
 major, minor = sys.version_info[:2]
 if (major, minor) < (3, 10):
     fail(f"Python 3.10+ required — found {major}.{minor}")
@@ -36,7 +36,7 @@ ok(f"Python {major}.{minor}")
 
 
 # ── 2. pip ────────────────────────────────────────────────────────────────────
-header("2 / 6  pip")
+header("2 / 7  pip")
 pip = shutil.which("pip") or shutil.which("pip3")
 if not pip:
     fail("pip not found — install pip first")
@@ -44,7 +44,7 @@ ok(pip)
 
 
 # ── 3. Install MetaOps package ────────────────────────────────────────────────
-header("3 / 6  Installing MetaOps + dependencies")
+header("3 / 7  Installing MetaOps + dependencies")
 info("Running: pip install -e .")
 result = subprocess.run(
     [sys.executable, "-m", "pip", "install", "-e", ".", "--quiet"],
@@ -57,7 +57,7 @@ ok("MetaOps installed")
 
 
 # ── 4. Optional audit tools ───────────────────────────────────────────────────
-header("4 / 6  Optional tools (audit workflow)")
+header("4 / 7  Optional tools (audit workflow)")
 for tool, package in [("bandit", "bandit"), ("pip-audit", "pip-audit")]:
     if shutil.which(tool):
         ok(f"{tool} already installed")
@@ -73,8 +73,22 @@ for tool, package in [("bandit", "bandit"), ("pip-audit", "pip-audit")]:
             warn(f"{tool} could not be installed — audit scans will skip it")
 
 
-# ── 5. Data directories ───────────────────────────────────────────────────────
-header("5 / 6  Data directories")
+# ── 5. Node MCP servers ────────────────────────────────────────────────────────
+header("5 / 7  Node MCP servers")
+npm = shutil.which("npm")
+if npm:
+    info("Installing local MCP servers via npm (filesystem, memory)...")
+    r = subprocess.run([npm, "install", "@modelcontextprotocol/server-filesystem", "@modelcontextprotocol/server-memory", "--quiet"])
+    if r.returncode == 0:
+        ok("MCP servers installed locally")
+    else:
+        warn("Failed to install local MCP servers via npm — npx fallback will be used at runtime")
+else:
+    warn("npm not found — skipping local MCP server installation")
+
+
+# ── 6. Data directories ───────────────────────────────────────────────────────
+header("6 / 7  Data directories")
 dirs = [
     Path("data/artifacts"),
     Path("data"),
@@ -84,8 +98,8 @@ for d in dirs:
 ok("./data/  and  ./data/artifacts/  ready")
 
 
-# ── 6. .env setup ─────────────────────────────────────────────────────────────
-header("6 / 6  Environment configuration")
+# ── 7. .env setup ─────────────────────────────────────────────────────────────
+header("7 / 7  Environment configuration")
 env_path     = Path(".env")
 example_path = Path(".env.example")
 

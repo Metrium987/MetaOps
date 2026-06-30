@@ -229,6 +229,17 @@ if r.returncode != 0:
     fail("Installation failed — see errors above")
 ok("MetaOps installed")
 
+# Local MCP servers install (Node/npm)
+npm = shutil.which("npm")
+if npm:
+    info("Installing local MCP servers via npm (filesystem, memory)...")
+    r = subprocess.run([npm, "install", "@modelcontextprotocol/server-filesystem", "@modelcontextprotocol/server-memory", "--quiet"])
+    if r.returncode == 0:
+        ok("MCP servers installed locally")
+    else:
+        warn("Failed to install local MCP servers via npm — npx fallback will be used at runtime")
+
+
 # Optional audit tools
 for tool_bin, package in [("bandit", "bandit"), ("pip-audit", "pip-audit")]:
     if (venv_bin / tool_bin).exists() or (venv_bin / f"{tool_bin}.exe").exists():
