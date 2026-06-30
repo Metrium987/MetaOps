@@ -106,13 +106,13 @@ async def after_tool_callback(
 
 # ── Model error ───────────────────────────────────────────────────────────────
 
-async def on_model_error_callback(callback_context: CallbackContext, llm_request, exc: Exception):
+async def on_model_error_callback(callback_context: CallbackContext, llm_request, error: Exception):
     """Log model-level errors. Return None to let ADK propagate the error."""
     logger.error(
         "Model error in agent '%s': %s — %s",
         callback_context.agent_name,
-        type(exc).__name__,
-        exc,
+        type(error).__name__,
+        error,
     )
     return None
 
@@ -120,12 +120,12 @@ async def on_model_error_callback(callback_context: CallbackContext, llm_request
 # ── Tool error ────────────────────────────────────────────────────────────────
 
 async def on_tool_error_callback(
-    tool: BaseTool, args: dict[str, Any], tool_context: ToolContext, exc: Exception
+    tool: BaseTool, args: dict[str, Any], tool_context: ToolContext, error: Exception
 ) -> Optional[dict]:
     """Convert tool exceptions into structured error dicts instead of crashing."""
-    logger.error("TOOL [%s] raised %s: %s", tool.name, type(exc).__name__, exc)
+    logger.error("TOOL [%s] raised %s: %s", tool.name, type(error).__name__, error)
     return {
-        "error": f"{type(exc).__name__}: {exc}",
+        "error": f"{type(error).__name__}: {error}",
         "tool": tool.name,
         "status": "failed",
     }

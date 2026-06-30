@@ -93,25 +93,38 @@ def resolve_provider(provider: str) -> tuple[Optional[str], Optional[str]]:
     return api_key, base_url
 
 
+# Providers natively supported by LiteLLM — no openai/ prefix needed
+_LITELLM_NATIVE_PROVIDERS = {
+    "openai", "anthropic", "gemini", "groq", "mistral", "cohere",
+    "perplexity", "togetherai", "fireworks", "nvidia", "huggingface",
+    "xai", "deepseek", "ollama", "azure", "openrouter",
+}
+
+
 class ModelConfig:
     def __init__(self, model_env: str, provider_env: str, default_model: str, default_provider: str = "openrouter"):
-        provider = os.getenv(provider_env, default_provider)
-        self.api_key, self.base_url = resolve_provider(provider)
+        self.provider = os.getenv(provider_env, default_provider).lower()
+        self.api_key, self.base_url = resolve_provider(self.provider)
         explicit_model = os.getenv(model_env)
         if explicit_model:
             self.model = explicit_model
         else:
             # Use provider-specific default if the caller's default_model was built for a different provider
-            self.model = _PROVIDER_DEFAULT_MODELS.get(provider.lower(), default_model)
+            self.model = _PROVIDER_DEFAULT_MODELS.get(self.provider, default_model)
 
     def to_litellm(self):
         from google.adk.models import LiteLlm
+        model = self.model
+        # Custom OpenAI-compatible endpoints need openai/ prefix so LiteLLM
+        # routes to the right code path instead of guessing from the model name
+        if self.provider not in _LITELLM_NATIVE_PROVIDERS and not model.startswith("openai/"):
+            model = f"openai/{model}"
         kwargs = {}
         if self.api_key:
             kwargs["api_key"] = self.api_key
         if self.base_url:
             kwargs["api_base"] = self.base_url
-        return LiteLlm(model=self.model, **kwargs)
+        return LiteLlm(model=model, **kwargs)
 
 
 class MetaOpsConfig:
