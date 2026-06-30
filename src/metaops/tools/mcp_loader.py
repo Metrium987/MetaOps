@@ -102,7 +102,9 @@ def _env_looks_valid(env: dict) -> tuple[bool, str]:
             return False, f"env var {key} is empty"
         val = str(value).strip()
         # Common placeholder patterns: "...", "xxx", "<token>", "YOUR_*", "sk-...", "ghp_..."
-        if val.endswith("...") or val.startswith("<") or val.upper().startswith("YOUR_"):
+        if (val.endswith("...") or val.startswith("<") or val.upper().startswith("YOUR_")
+                or "your_" in val.lower() or "placeholder" in val.lower()
+                or "token_here" in val.lower() or "api_key_here" in val.lower()):
             return False, f"env var {key} looks like a placeholder ({val!r})"
     return True, ""
 
