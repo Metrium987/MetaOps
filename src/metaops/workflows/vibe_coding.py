@@ -1,53 +1,55 @@
-import uuid
+"""Vibe coding — coder + reviewer loop with automatic revision.
+
+Simple Python loop (no Workflow graph needed):
+  1. Coder writes code from the task spec
+  2. Reviewer checks for correctness, bugs, security
+  3. If rejected, coder revises with reviewer feedback
+  4. Repeat up to MAX_REVISIONS times
+
+Exposed as FunctionTool for the coordinator agent.
+"""
+
 import logging
 from google.adk.agents import Agent
-from google.adk.workflow import Workflow
-from google.adk.events import Event
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
-from google.adk.artifacts import InMemoryArtifactService
 from google.adk.tools import FunctionTool
-from google.genai import types
 from metaops.config import MetaOpsConfig
+from metaops.workflows.agent_runner import run_agent_once
 
 logger = logging.getLogger(__name__)
 
 config = MetaOpsConfig()
 
-# Maximum reviewer → coder cycles before giving up and returning the best attempt
 MAX_REVISIONS = 3
-
 
 # ---------------------------------------------------------------------------
 # Agents
 # ---------------------------------------------------------------------------
 
-_CODER_INSTRUCTION = """You are an expert software engineer. Your job is to write correct, clean code.
+_CODER_INSTRUCTION = """You are an expert software engineer. Write correct, clean, production-ready code.
 
-IMPORTANT — read the full conversation before writing:
-- If this is the first message, write the code from scratch based on the task.
-- If a reviewer has already provided feedback (look for "VERDICT: NEEDS_WORK" above),
-  you MUST fix every issue in the numbered list. Start your response with:
-  "Addressing reviewer feedback:" followed by a brief acknowledgment of each fix.
-
-Output format:
-```<language>
-<your code here>
-```
-Then: a one-paragraph explanation of what the code does and any key decisions made."""
+Rules:
+- Read the FULL prompt carefully before writing anything.
+- If reviewer feedback is included, fix EVERY issue listed. Start with:
+  "Addressing reviewer feedback:" then acknowledge each fix briefly.
+- Output format: wrap code in a fenced block with the language tag:
+  ```<language>
+  <your code>
+  ```
+  Then add a 1-paragraph explanation of what the code does.
+- Write COMPLETE, runnable code. No placeholders, no TODOs, no "..."."""
 
 _REVIEWER_INSTRUCTION = """You are a strict but fair code reviewer.
 
-Review the latest code in the conversation. Check for:
-1. Correctness — does it match what was asked?
-2. Bugs — logic errors, off-by-one, unhandled exceptions, edge cases
-3. Security — injections, unsafe evals, exposed secrets, path traversal
-4. Quality — unclear naming, unnecessary complexity, missing error handling
+Review the code against the original task requirements. Check:
+1. Correctness — does it do what was asked?
+2. Bugs — logic errors, off-by-one, unhandled edge cases
+3. Security — injections, unsafe evals, exposed secrets
+4. Completeness — is anything missing from the requirements?
 
-If the code is correct and safe, approve it.
-If there are real issues, reject it with a specific numbered list.
+If the code is correct and complete → approve it.
+If there are real issues → reject with a specific numbered list of problems.
 
-You MUST end your response with EXACTLY one of these two lines (no variations):
+You MUST end your response with EXACTLY one of:
 VERDICT: APPROVED
 VERDICT: NEEDS_WORK"""
 
@@ -65,113 +67,64 @@ reviewer_agent = Agent(
 
 
 # ---------------------------------------------------------------------------
-# Router — reads the reviewer verdict, loops back or ends
-# ---------------------------------------------------------------------------
-
-def review_router(node_input: str, ctx):
-    """Route back to coder_agent on rejection, or end the workflow on approval.
-
-    Tracks iteration count in ctx.state to enforce MAX_REVISIONS.
-    When the limit is reached the last attempt is returned regardless of verdict.
-    """
-    text = str(node_input)
-    iterations = ctx.state.get("coding:iterations", 0)
-
-    approved = "VERDICT: APPROVED" in text
-    at_limit = iterations >= MAX_REVISIONS
-
-    if approved or at_limit:
-        if at_limit and not approved:
-            logger.warning(
-                "Vibe coding reached max revisions (%d) without approval. "
-                "Returning last attempt.",
-                MAX_REVISIONS,
-            )
-        ctx.state["coding:iterations"] = 0
-        return  # no yield → terminal, output returned to user
-
-    ctx.state["coding:iterations"] = iterations + 1
-    logger.info(
-        "Reviewer rejected — revision %d/%d", iterations + 1, MAX_REVISIONS
-    )
-    yield Event(route="coder_agent")
-
-
-# ---------------------------------------------------------------------------
-# Workflow graph
-#
-#   START → coder_agent → reviewer_agent → review_router
-#                ↑                               ↓ (NEEDS_WORK, under limit)
-#                └───────────────────────────────┘
-#
-# The shared conversation context means the coder sees the reviewer's
-# numbered issues on every subsequent pass — no extra state injection needed.
-# ---------------------------------------------------------------------------
-
-vibe_coding_workflow = Workflow(
-    name="vibe_coding",
-    edges=[
-        ("START", coder_agent, reviewer_agent, review_router),
-        (review_router, {"coder_agent": coder_agent}),
-    ],
-)
-
-
-# ---------------------------------------------------------------------------
-# FunctionTool wrapper — called by the coordinator like any other tool
+# FunctionTool wrapper
 # ---------------------------------------------------------------------------
 
 async def vibe_code(task: str) -> dict:
     """Write code with automatic review and correction loop.
 
-    Spawns a coder agent, then a reviewer. If the reviewer rejects the code,
-    the coder revises it. Repeats up to MAX_REVISIONS times.
+    Spawns a coder agent, then a reviewer. If the reviewer rejects,
+    the coder revises using the feedback. Repeats up to MAX_REVISIONS.
 
     Args:
-        task: Full description of the coding task, including language, context,
-              constraints, and any examples.
+        task: Full description of the coding task including language,
+              framework, constraints, and any examples.
 
     Returns:
         dict with keys:
-            code     — the final (approved or best) code block
-            approved — True if the reviewer approved, False if max retries hit
-            revisions — number of reviewer → coder cycles that ran
+            code     — the final code block (approved or best attempt)
+            approved — True only if the reviewer explicitly approved
+            revisions — number of coder→reviewer cycles that ran
     """
-    runner = Runner(
-        node=vibe_coding_workflow,
-        app_name="metaops_vibe_coding",
-        session_service=InMemorySessionService(),
-        artifact_service=InMemoryArtifactService(),
+    # Step 1: Initial code generation
+    coder_output = await run_agent_once(coder_agent, task)
+    logger.info("Coder produced initial code (%d chars)", len(coder_output))
+
+    for revision in range(MAX_REVISIONS):
+        # Step 2: Review
+        review_prompt = (
+            f"## Original Task\n{task}\n\n"
+            f"## Code to Review\n{coder_output}"
+        )
+        review = await run_agent_once(reviewer_agent, review_prompt)
+
+        if "VERDICT: APPROVED" in review:
+            logger.info("Reviewer approved at revision %d", revision)
+            return {
+                "code": coder_output,
+                "approved": True,
+                "revisions": revision,
+            }
+
+        # Step 3: Revise based on feedback
+        logger.info("Reviewer rejected — revision %d/%d", revision + 1, MAX_REVISIONS)
+        revision_prompt = (
+            f"## Original Task\n{task}\n\n"
+            f"## Your Previous Code\n{coder_output}\n\n"
+            f"## Reviewer Feedback (fix ALL issues)\n{review}"
+        )
+        coder_output = await run_agent_once(coder_agent, revision_prompt)
+
+    # Max revisions reached without approval
+    logger.warning(
+        "Vibe coding reached max revisions (%d) without approval. "
+        "Returning last attempt.",
+        MAX_REVISIONS,
     )
-
-    session = await runner.session_service.create_session(
-        app_name="metaops_vibe_coding",
-        user_id="vibe_coder",
-        session_id=str(uuid.uuid4()),
-    )
-
-    output_parts: list[str] = []
-    async for event in runner.run_async(
-        user_id="vibe_coder",
-        session_id=session.id,
-        new_message=types.Content(parts=[types.Part(text=task)]),
-    ):
-        if event.content:
-            for part in event.content.parts or []:
-                if part.text:
-                    output_parts.append(part.text)
-
-    final_output = "\n".join(output_parts)
-    approved = "VERDICT: APPROVED" in final_output or (
-        # If the last event is from coder_agent (max retries hit), it's not approved
-        "VERDICT:" not in final_output
-    )
-    revisions = session.state.get("coding:iterations", 0)
-
     return {
-        "code": final_output,
-        "approved": approved,
-        "revisions": revisions,
+        "code": coder_output,
+        "approved": False,
+        "revisions": MAX_REVISIONS,
     }
 
 

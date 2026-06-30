@@ -1,13 +1,17 @@
-import uuid
+"""Deep research — gather → synthesize pipeline.
+
+Two-stage pipeline:
+  Stage 1: Researcher gathers raw material using web tools
+  Stage 2: Synthesizer produces a clean, structured report
+
+Exposed as FunctionTool for the coordinator agent.
+"""
+
 import logging
 from google.adk.agents import Agent
-from google.adk.workflow import Workflow
 from google.adk.tools import FunctionTool
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
-from google.adk.artifacts import InMemoryArtifactService
-from google.genai import types
 from metaops.config import MetaOpsConfig
+from metaops.workflows.agent_runner import run_agent_once
 from metaops.tools.web_search import (
     web_search_tool,
     web_extract_tool,
@@ -59,11 +63,6 @@ synthesizer_agent = Agent(
     instruction=_SYNTHESIZER_INSTRUCTION,
 )
 
-research_workflow = Workflow(
-    name="research",
-    edges=[("START", researcher_agent, synthesizer_agent)],
-)
-
 
 async def deep_research(query: str) -> dict:
     """Search the web comprehensively and synthesize a structured report.
@@ -80,30 +79,19 @@ async def deep_research(query: str) -> dict:
             report — structured markdown report with findings and sources
             query  — echo of the original query
     """
-    runner = Runner(
-        node=research_workflow,
-        app_name="metaops_research",
-        session_service=InMemorySessionService(),
-        artifact_service=InMemoryArtifactService(),
-    )
-    session = await runner.session_service.create_session(
-        app_name="metaops_research",
-        user_id="researcher",
-        session_id=str(uuid.uuid4()),
-    )
-    parts: list[str] = []
-    async for event in runner.run_async(
-        user_id="researcher",
-        session_id=session.id,
-        new_message=types.Content(parts=[types.Part(text=query)]),
-    ):
-        if event.content:
-            for part in event.content.parts or []:
-                if part.text:
-                    parts.append(part.text)
+    # Stage 1: Gather raw material
+    logger.info("Research started for: %s", query[:80])
+    raw_research = await run_agent_once(researcher_agent, query)
+    logger.info("Research gathering complete (%d chars)", len(raw_research))
 
-    report = "\n".join(parts)
-    logger.info("Research complete for query: %s", query[:80])
+    # Stage 2: Synthesize into a clean report
+    synthesis_prompt = (
+        f"## Original Query\n{query}\n\n"
+        f"## Raw Research\n{raw_research}"
+    )
+    report = await run_agent_once(synthesizer_agent, synthesis_prompt)
+    logger.info("Research synthesis complete for: %s", query[:80])
+
     return {"report": report, "query": query}
 
 

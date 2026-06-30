@@ -105,14 +105,26 @@ Do not proceed on assumptions that could cause irreversible side effects."""
 def dynamic_instruction(callback_context) -> str:
     tool_guide = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WORKFLOW GATE — MANDATORY before heavy tools
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Before calling vibe_code, full_dev_cycle, or deep_research you MUST:
+1. SUMMARIZE what you understood from the user's request (in their language)
+2. ASK for any missing details (language? framework? style? constraints?)
+3. PROPOSE 2-3 concrete approaches and let the user pick
+4. Only THEN call the tool with a COMPLETE, detailed task specification
+
+NEVER launch a workflow on a vague or short request. Ask first, build later.
+If the user's request is already very specific and detailed, you may skip step 3.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 TOOL SELECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Shell / system tasks          → execute_secure_command
 Long bash pipelines           → workstream_executor (isolated, returns 1-sentence summary)
 Execute Python directly       → code_executor (built-in, no tool call needed)
-Write code (with review)      → vibe_code (coder → reviewer loop, max 3 revisions)
-Plan + code + optional tests  → full_dev_cycle (architect → vibe_code → test runner)
-Deep web research             → deep_research (parallel gather + structured synthesis)
+Write code (with review)      → vibe_code ⚠️ REQUIRES WORKFLOW GATE
+Plan + code + optional tests  → full_dev_cycle ⚠️ REQUIRES WORKFLOW GATE
+Deep web research             → deep_research ⚠️ REQUIRES WORKFLOW GATE
 Quick web lookup              → web_search / web_extract / web_crawl / web_map
 Company intelligence          → company_info
 Hard decision / tradeoff      → thinker (pass full problem + all context)

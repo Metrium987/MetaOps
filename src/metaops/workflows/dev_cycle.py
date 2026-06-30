@@ -1,12 +1,20 @@
-import uuid
+"""Full dev cycle — plan → code (with review) → optional tests.
+
+Three-stage pipeline:
+  Stage 1: Architect agent produces a step-by-step implementation plan
+  Stage 2: vibe_code implements the plan with automatic review loop
+  Stage 3: (Optional) Run tests and report results
+
+Exposed as FunctionTool for the coordinator agent.
+"""
+
+import os
+import shlex
 import logging
 from google.adk.agents import Agent
-from google.adk.tools import FunctionTool
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
-from google.adk.artifacts import InMemoryArtifactService
-from google.genai import types
+from google.adk.tools import FunctionTool, ToolContext
 from metaops.config import MetaOpsConfig
+from metaops.workflows.agent_runner import run_agent_once
 from metaops.workflows.vibe_coding import vibe_code
 
 logger = logging.getLogger(__name__)
@@ -37,32 +45,8 @@ _planner_agent = Agent(
 )
 
 
-async def _run_agent_once(agent: Agent, prompt: str) -> str:
-    runner = Runner(
-        agent=agent,
-        app_name=f"metaops_{agent.name}",
-        session_service=InMemorySessionService(),
-        artifact_service=InMemoryArtifactService(),
-    )
-    session = await runner.session_service.create_session(
-        app_name=f"metaops_{agent.name}",
-        user_id=agent.name,
-        session_id=str(uuid.uuid4()),
-    )
-    parts: list[str] = []
-    async for event in runner.run_async(
-        user_id=agent.name,
-        session_id=session.id,
-        new_message=types.Content(parts=[types.Part(text=prompt)]),
-    ):
-        if event.content:
-            for part in event.content.parts or []:
-                if part.text:
-                    parts.append(part.text)
-    return "\n".join(parts)
-
-
 async def _run_shell(command: str) -> str:
+    """Execute a shell command and return its output (last 4000 chars)."""
     from metaops.backends.local import LocalTerminalBackend
     backend = LocalTerminalBackend()
     chunks: list[str] = []
@@ -70,10 +54,6 @@ async def _run_shell(command: str) -> str:
         chunks.append(chunk)
     return "".join(chunks)[-4000:]
 
-
-import shlex
-import os
-from google.adk.tools import FunctionTool, ToolContext
 
 async def full_dev_cycle(
     task: str,
@@ -110,7 +90,7 @@ async def full_dev_cycle(
         user_role = "guest"
         if tool_context and tool_context.state:
             user_role = tool_context.state.get("user:role", "guest")
-        
+
         if user_role != "admin":
             try:
                 tokens = shlex.split(test_command)
@@ -123,8 +103,8 @@ async def full_dev_cycle(
                             "code": "",
                             "approved": False,
                             "revisions": 0,
-                            "test_output": "Error: Insufficient permissions to execute sensitive commands in test suite.",
-                            "tests_passed": False
+                            "test_output": "Error: Insufficient permissions to execute sensitive commands.",
+                            "tests_passed": False,
                         }
             except ValueError:
                 return {
@@ -132,13 +112,13 @@ async def full_dev_cycle(
                     "code": "",
                     "approved": False,
                     "revisions": 0,
-                    "test_output": "Error: Test command parsing failed. Rejected for security reasons.",
-                    "tests_passed": False
+                    "test_output": "Error: Test command parsing failed.",
+                    "tests_passed": False,
                 }
 
     # Stage 1: Plan
-    plan = await _run_agent_once(_planner_agent, task)
-    logger.info("Planning complete")
+    plan = await run_agent_once(_planner_agent, task)
+    logger.info("Planning complete (%d chars)", len(plan))
 
     # Stage 2: Implement with review loop
     combined_task = f"{task}\n\n---\nImplementation Plan:\n{plan}"
