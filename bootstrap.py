@@ -48,7 +48,36 @@ ok(f"Python {major}.{minor}  ({sys.executable})")
 header("2 / 5  Git")
 git = shutil.which("git")
 if not git:
-    fail("git not found. Download: https://git-scm.com")
+    info("git not found — attempting automatic install...")
+    installed = False
+    if sys.platform != "win32":
+        # Detect package manager and install git
+        for pkg_mgr, cmd in [
+            ("apt-get", ["sudo", "apt-get", "install", "-y", "git"]),
+            ("apt",     ["sudo", "apt",     "install", "-y", "git"]),
+            ("dnf",     ["sudo", "dnf",     "install", "-y", "git"]),
+            ("yum",     ["sudo", "yum",     "install", "-y", "git"]),
+            ("brew",    ["brew", "install",             "git"]),
+            ("pacman",  ["sudo", "pacman",  "-S", "--noconfirm", "git"]),
+            ("zypper",  ["sudo", "zypper",  "install", "-y", "git"]),
+        ]:
+            if shutil.which(pkg_mgr):
+                info(f"Using {pkg_mgr} to install git...")
+                r = subprocess.run(cmd, capture_output=False)
+                if r.returncode == 0:
+                    git = shutil.which("git")
+                    installed = bool(git)
+                break
+    if not git:
+        fail(
+            "git not found and automatic install failed.\n"
+            "  On Debian/Ubuntu/Raspberry Pi:  sudo apt-get install -y git\n"
+            "  On Fedora/RHEL:                 sudo dnf install -y git\n"
+            "  On macOS:                        brew install git\n"
+            "  On Windows:                     https://git-scm.com"
+        )
+    if installed:
+        ok(f"git installed automatically: {git}")
 ok(git)
 
 
