@@ -154,34 +154,34 @@ else:
     venv_python = VENV_ABS / "bin" / "python"
     venv_bin    = VENV_ABS / "bin"
 
-# Upgrade pip inside venv (handles Debian's outdated bundled pip)
+# Upgrade pip inside venv
 info("Upgrading pip inside venv...")
 subprocess.run(
     [str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "--quiet"],
     capture_output=True,
 )
+ok("pip up to date")
 
-# Install MetaOps
-info("pip install -e .")
+# Install MetaOps — stream output so download progress is visible
+info("pip install -e .  (downloading dependencies...)")
+print()
 os.chdir(REPO_ABS)
 r = subprocess.run(
-    [str(venv_python), "-m", "pip", "install", "-e", ".", "--quiet"],
-    capture_output=True, text=True,
+    [str(venv_python), "-m", "pip", "install", "-e", "."],
 )
+print()
 if r.returncode != 0:
-    print(r.stderr[-3000:])
-    fail("pip install failed")
+    fail("pip install failed — see errors above")
 ok("MetaOps installed in venv")
 
-# Optional audit tools
+# Optional audit tools — stream output
 for tool_bin, package in [("bandit", "bandit"), ("pip-audit", "pip-audit")]:
     if (venv_bin / tool_bin).exists() or (venv_bin / f"{tool_bin}.exe").exists():
         ok(f"{tool_bin} already available")
     else:
         info(f"Installing {package} (optional — audit workflow)...")
         r = subprocess.run(
-            [str(venv_python), "-m", "pip", "install", package, "--quiet"],
-            capture_output=True, text=True,
+            [str(venv_python), "-m", "pip", "install", package],
         )
         if r.returncode == 0:
             ok(f"{tool_bin} installed")
