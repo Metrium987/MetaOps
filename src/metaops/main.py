@@ -17,9 +17,8 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 examples:
-  metaops                   start CLI (+ Telegram if token is set)
-  metaops --telegram-only   run Telegram bot only, no interactive CLI
-  metaops --no-telegram     force CLI only even if TELEGRAM_BOT_TOKEN is set
+  metaops                   start interactive CLI console only (default)
+  metaops --telegram-only   run Telegram bot gateway only, no interactive CLI
   metaops --no-cron         skip the background scheduler
   metaops --debug           verbose logging
   metaops --version         print version and exit
@@ -34,11 +33,6 @@ examples:
         "--telegram-only",
         action="store_true",
         help="run Telegram gateway only (requires TELEGRAM_BOT_TOKEN in .env)",
-    )
-    parser.add_argument(
-        "--no-telegram",
-        action="store_true",
-        help="disable Telegram gateway even if TELEGRAM_BOT_TOKEN is set",
     )
     parser.add_argument(
         "--no-cron",
@@ -68,14 +62,6 @@ async def main(args: argparse.Namespace):
         level=log_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-
-    if not args.debug:
-        # Silence extremely noisy polling logs from third-party libraries
-        logging.getLogger("httpx").setLevel(logging.WARNING)
-        logging.getLogger("telegram").setLevel(logging.WARNING)
-        logging.getLogger("apscheduler").setLevel(logging.WARNING)
-        logging.getLogger("chromadb").setLevel(logging.WARNING)
-
 
     runner = create_runner()
     session_manager = SessionManager()
@@ -108,27 +94,20 @@ async def main(args: argparse.Namespace):
         )
         cron_scheduler.start()
 
-    # Telegram gateway
-    use_telegram = (
-        bool(config.telegram_bot_token)
-        and not args.no_telegram
-    )
+    # Choose between Telegram and CLI (mutually exclusive)
     telegram_bridge = None
-    if use_telegram:
-        telegram_bridge = TelegramBridge(
-            runner=runner,
-            session_manager=session_manager,
-            token=config.telegram_bot_token,
-            session_service=session_service,
-        )
-        await telegram_bridge.start()
-    elif args.telegram_only:
-        print("Error: --telegram-only requires TELEGRAM_BOT_TOKEN to be set in .env", file=sys.stderr)
-        sys.exit(1)
-
     try:
         if args.telegram_only:
-            # Block forever — CLI not started
+            if not config.telegram_bot_token:
+                print("Error: --telegram-only requires TELEGRAM_BOT_TOKEN to be set in .env", file=sys.stderr)
+                sys.exit(1)
+            telegram_bridge = TelegramBridge(
+                runner=runner,
+                session_manager=session_manager,
+                token=config.telegram_bot_token,
+                session_service=session_service,
+            )
+            await telegram_bridge.start()
             print("MetaOps Telegram gateway running. Press Ctrl+C to stop.")
             await asyncio.Event().wait()
         else:
