@@ -39,7 +39,7 @@ memory_service = HybridVectorMemoryService(
     embedding_api_key=config.embedding_api_key,
     embedding_base_url=config.embedding_base_url,
 )
-artifact_service = FileArtifactService(base_dir=os.getenv("METAOPS_ARTIFACTS_DIR", "./data/artifacts"))
+artifact_service = FileArtifactService(root_dir=os.getenv("METAOPS_ARTIFACTS_DIR", "./data/artifacts"))
 
 init_rag_tools(memory_service)
 init_callbacks(memory_service)

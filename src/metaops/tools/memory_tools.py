@@ -21,8 +21,8 @@ async def recall_past_context(query: str, tool_context: ToolContext) -> dict:
 
     context_snippets = []
     for memory in memory_response.memories:
-        if memory.events and memory.events[0].content:
-            text = memory.events[0].content.parts[0].text
+        if memory.content and memory.content.parts:
+            text = memory.content.parts[0].text
             if text:
                 context_snippets.append(text)
 
