@@ -4,7 +4,7 @@ from google.adk.runners import Runner
 from google.adk.artifacts import FileArtifactService
 from google.adk.code_executors import UnsafeLocalCodeExecutor
 from google.adk.planners import BuiltInPlanner
-from google.adk.tools import preload_memory, load_memory
+from google.adk.tools import preload_memory, load_memory, load_artifacts, request_input
 from metaops.memory.session_service import SQLiteSessionService
 from metaops.memory.vector_service import HybridVectorMemoryService
 from metaops.tools.secure_toolset import SecureMetaOpsToolset
@@ -24,7 +24,15 @@ from metaops.tools.web_search import (
     web_map_tool,
     company_info_tool,
 )
-from metaops.core.callbacks import auto_inject_memory_callback, skill_harvest_callback, init_callbacks
+from metaops.core.callbacks import (
+    auto_inject_memory_callback,
+    skill_harvest_callback,
+    before_tool_callback,
+    after_tool_callback,
+    on_model_error_callback,
+    on_tool_error_callback,
+    init_callbacks,
+)
 from metaops.tools.skill_executor import skill_executor_tool
 from metaops.tools.memory_tools import skill_saver_tool, memory_search_tool
 from metaops.config import MetaOpsConfig
@@ -108,9 +116,11 @@ Quick web lookup              → web_search / web_extract / web_crawl / web_map
 Company intelligence          → company_info
 Hard decision / tradeoff      → thinker (pass full problem + all context)
 Search past conversations     → load_memory (explicit query) — preload_memory runs automatically
+Load saved artifacts          → load_artifacts (images, PDFs, reports saved in this session)
 Index a file into memory      → ingest_file_dependency
 Execute a learned skill       → execute_skill
 Code + security audit         → run_audit (bandit + pip-audit + quality scan)
+Need info from user           → request_input (pauses, asks user, resumes — use BEFORE acting on unknowns)
 Destructive / irreversible    → request_human_approval FIRST, always
 """
     skills = callback_context.state.get("available_skills", "")
@@ -150,9 +160,11 @@ def create_runner() -> Runner:
             # Reasoning & audit
             thinker_tool,
             audit_tool,
-            # Memory & skills
+            # Memory, artifacts & skills
             preload_memory,
             load_memory,
+            load_artifacts,
+            request_input,
             memory_search_tool,
             ingest_file_tool,
             skill_executor_tool,
@@ -163,6 +175,10 @@ def create_runner() -> Runner:
         sub_agents=[human_approver_agent],
         before_agent_callback=auto_inject_memory_callback,
         after_agent_callback=skill_harvest_callback,
+        before_tool_callback=before_tool_callback,
+        after_tool_callback=after_tool_callback,
+        on_model_error_callback=on_model_error_callback,
+        on_tool_error_callback=on_tool_error_callback,
         code_executor=UnsafeLocalCodeExecutor(),
         planner=BuiltInPlanner(),
     )
