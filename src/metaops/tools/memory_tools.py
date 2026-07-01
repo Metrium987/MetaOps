@@ -1,11 +1,35 @@
+import os
 from google.adk.tools import FunctionTool, ToolContext
 from google.genai import types
+from metaops.memory.vector_service import HybridVectorMemoryService
+
+_memory_service: HybridVectorMemoryService = None
+
+
+def init_memory_tools(memory_service: HybridVectorMemoryService):
+    global _memory_service
+    _memory_service = memory_service
 
 
 async def save_procedural_skill(name: str, code: str, tool_context: ToolContext) -> dict:
     """Saves a reusable procedure as a versioned ADK Artifact."""
     artifact_part = types.Part.from_text(text=code)
     version = await tool_context.save_artifact(f"skill_{name}", artifact_part)
+
+    # Index in ChromaDB procedural_memory for semantic search
+    if _memory_service:
+        app_name = tool_context._invocation_context.app_name
+        user_id = tool_context.user_id
+        _memory_service.procedural.add(
+            documents=[code],
+            metadatas=[{
+                "skill_name": name,
+                "app_name": app_name,
+                "user_id": user_id,
+                "artifact_version": version,
+            }],
+            ids=[f"skill_{name}_v{version}"],
+        )
 
     current_skills = tool_context.state.get("user:learned_skills", [])
     if name not in current_skills:

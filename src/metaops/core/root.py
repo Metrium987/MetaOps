@@ -6,6 +6,9 @@ from google.adk.runners import Runner
 from google.adk.artifacts import FileArtifactService
 from google.adk.code_executors import UnsafeLocalCodeExecutor
 from google.adk.sessions.sqlite_session_service import SqliteSessionService
+from google.adk.agents.run_config import RunConfig
+from google.adk.apps.app import App
+from google.adk.apps._configs import EventsCompactionConfig
 
 from google.adk.tools import preload_memory, load_artifacts, request_input
 from metaops.memory.vector_service import HybridVectorMemoryService
@@ -27,7 +30,7 @@ from metaops.tools.web_search import (
 )
 from metaops.core.callbacks import (
     auto_inject_memory_callback,
-    skill_harvest_callback,
+    combined_after_agent_callback,
     before_tool_callback,
     after_tool_callback,
     on_model_error_callback,
@@ -35,7 +38,7 @@ from metaops.core.callbacks import (
     init_callbacks,
 )
 from metaops.tools.skill_executor import skill_executor_tool
-from metaops.tools.memory_tools import skill_saver_tool, memory_search_tool
+from metaops.tools.memory_tools import skill_saver_tool, memory_search_tool, init_memory_tools
 from metaops.config import MetaOpsConfig
 
 config = MetaOpsConfig()
@@ -53,6 +56,7 @@ artifact_service = FileArtifactService(root_dir=os.getenv("METAOPS_ARTIFACTS_DIR
 
 init_rag_tools(memory_service)
 init_callbacks(memory_service)
+init_memory_tools(memory_service)
 
 _STATIC_PROFILE = """You are MetaOps — an enterprise-grade autonomous agent with a persistent memory system, specialized workflows, and direct access to shell execution, web research, and code generation pipelines.
 
@@ -60,10 +64,8 @@ _STATIC_PROFILE = """You are MetaOps — an enterprise-grade autonomous agent wi
 STRICT CONTRACT — Execute all tasks under these absolute rules. Violation = Immediate Halt.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. THINK FIRST
-   State your assumptions and your step-by-step plan BEFORE any action or code generation.
-   (Exception: Conversational greetings, chit-chat, or simple check-ins do not require planning).
-
+1. Answer directly, without reasoning
+  
 2. SOURCE CLAIMS
    Cite a local file path or official URL for EVERY technical or conceptual claim.
    Never rely on training memory alone. No hallucination.
@@ -147,11 +149,31 @@ Destructive / irreversible    → request_input FIRST, always — message=clear 
 def create_runner() -> Runner:
     config.validate_keys()
     mcp_toolsets = load_mcp_toolsets()
+    # BuiltInPlanner: enables native thinking/reasoning for Gemini and Anthropic.
+    # For other providers (OpenRouter, OpenAI, etc.) this is skipped — the model
+    # handles reasoning internally without ADK control.
+    planner = None
+    if config.coordinator.provider in ("gemini", "anthropic"):
+        from google.adk.planners import BuiltInPlanner
+        from google.genai import types
+        planner = BuiltInPlanner(
+            thinking_config=types.ThinkingConfig(
+                include_thoughts=True,
+                thinking_budget=10240,
+            )
+        )
+
     metaops_root = Agent(
         name="metaops_coordinator",
+        description=(
+            "Enterprise-grade autonomous AI agent with persistent memory, "
+            "specialized workflows (vibe_code, full_dev_cycle, deep_research), "
+            "shell execution, web research, and code generation pipelines."
+        ),
         model=config.coordinator.to_model(),
         static_instruction=_STATIC_PROFILE,
         instruction=dynamic_instruction,
+        planner=planner,
         tools=[
             # Execution
             SecureMetaOpsToolset(),
@@ -181,17 +203,37 @@ def create_runner() -> Runner:
             *mcp_toolsets,
         ],
         before_agent_callback=auto_inject_memory_callback,
-        after_agent_callback=skill_harvest_callback,
+        after_agent_callback=combined_after_agent_callback,
         before_tool_callback=before_tool_callback,
         after_tool_callback=after_tool_callback,
         on_model_error_callback=on_model_error_callback,
         on_tool_error_callback=on_tool_error_callback,
         code_executor=UnsafeLocalCodeExecutor(),
     )
+
+    # Events compaction: summarize old events to prevent context overflow.
+    # Compacts every 20 invocations, keeping 3 invocations of overlap for context.
+    compaction_config = EventsCompactionConfig(
+        compaction_interval=20,
+        overlap_size=3,
+    )
+
+    app = App(
+        name="metaops_enterprise",
+        root_agent=metaops_root,
+        events_compaction_config=compaction_config,
+    )
+
     return Runner(
-        agent=metaops_root,
-        app_name="metaops_enterprise",
+        app=app,
         session_service=session_service,
         memory_service=memory_service,
         artifact_service=artifact_service,
+    )
+
+
+def get_run_config() -> RunConfig:
+    """Return RunConfig with safety limits to prevent infinite loops."""
+    return RunConfig(
+        max_llm_calls=50,
     )

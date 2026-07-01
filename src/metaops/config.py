@@ -238,14 +238,23 @@ class ModelConfig:
             "Native Anthropic driver: provider=%s model=%s max_tokens=%d",
             self.provider, model, self.max_tokens,
         )
+        # AnthropicLlm doesn't accept retry_options directly — retries are
+        # handled by the SDK's built-in retry mechanism.
         return AnthropicLlm(model=model, max_tokens=self.max_tokens)
 
     def _build_gemini(self):
         """Use the native Google GenAI driver — direct Gemini API."""
         from google.adk.models import Gemini
+        from google.genai import types
         model = self.model
-        _cfg_logger.info("Native Gemini driver: model=%s", model)
-        return Gemini(model=model)
+        retry_opts = types.HttpRetryOptions(
+            attempts=3,
+            exp_base=2,
+            initial_delay=1,
+            http_status_codes=[429, 499, 500, 503, 504],
+        )
+        _cfg_logger.info("Native Gemini driver: model=%s (retry: 3 attempts)", model)
+        return Gemini(model=model, retry_options=retry_opts)
 
     def _build_litellm(self):
         """Fallback to LiteLLM for providers without a native driver."""

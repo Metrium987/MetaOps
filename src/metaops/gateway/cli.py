@@ -3,9 +3,13 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
 from google.adk.events import Event
 from google.adk.runners import Runner
+from google.adk.agents.run_config import RunConfig
 from google.genai import types
 from metaops.gateway.base import BaseGateway
 from metaops.gateway.session_manager import SessionManager
+
+# Safety limit: prevent infinite LLM loops per user turn
+_DEFAULT_RUN_CONFIG = RunConfig(max_llm_calls=50)
 
 class CLIBridge(BaseGateway):
     def __init__(self, runner: Runner, session_manager: SessionManager):
@@ -28,15 +32,20 @@ class CLIBridge(BaseGateway):
                 else:
                     loop = asyncio.get_running_loop()
                     user_input = await loop.run_in_executor(None, input, "MetaOps> ")
-                
+
                 if user_input.strip().lower() in ["/exit", "/quit"]: break
                 if not user_input.strip(): continue
-                
+
                 content = types.Content(role='user', parts=[types.Part(text=user_input)])
-                async for event in self.runner.run_async(user_id=self.user_id, session_id=session_id, new_message=content):
+                async for event in self.runner.run_async(
+                    user_id=self.user_id,
+                    session_id=session_id,
+                    new_message=content,
+                    run_config=_DEFAULT_RUN_CONFIG,
+                ):
                     if event.is_final_response() and event.content and event.content.parts:
                         text = "".join([
-                            part.text for part in event.content.parts 
+                            part.text for part in event.content.parts
                             if part.text and not getattr(part, "thought", False)
                         ])
                         if text: print(f"\n\033[92mMetaOps:\033[0m {text}\n", flush=True)

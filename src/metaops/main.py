@@ -22,6 +22,8 @@ examples:
   metaops                   start interactive CLI console only (default)
   metaops gateway telegram  run Telegram bot gateway only
   metaops gateway cli       run interactive CLI console gateway only
+  metaops db reset          reset sessions database (fixes corrupted tool_calls)
+  metaops db reset all      reset all databases
   metaops --no-cron         skip the background scheduler
   metaops --debug           verbose logging
   metaops --version         print version and exit
@@ -58,6 +60,23 @@ examples:
         choices=["telegram", "cli"],
         default="cli",
         help="Gateway to start (default: cli)",
+    )
+
+    # db command
+    db_parser = subparsers.add_parser("db", help="Database management")
+    db_sub = db_parser.add_subparsers(dest="db_action", help="Database actions")
+    db_reset = db_sub.add_parser("reset", help="Reset database(s)")
+    db_reset.add_argument(
+        "target",
+        nargs="?",
+        choices=["sessions", "skills", "vector", "artifacts", "all"],
+        default="sessions",
+        help="Which database to reset (default: sessions)",
+    )
+    db_reset.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        help="Skip confirmation prompt",
     )
 
     return parser
@@ -197,9 +216,67 @@ async def _close_mcp_toolsets(runner) -> None:
                 logger.warning("Failed to close MCP toolset cleanly: %s", exc)
 
 
+def _db_reset(args: argparse.Namespace):
+    """Reset database(s). Synchronous — runs outside asyncio."""
+    from metaops.config import MetaOpsConfig
+    import os
+    import shutil
+    from pathlib import Path
+
+    config = MetaOpsConfig()
+    target = args.target or "sessions"
+
+    targets = {
+        "sessions": ("SQLite sessions", config.sessions_db),
+        "skills": ("SQLite skills", config.skills_db),
+        "vector": ("ChromaDB vector", config.vector_db),
+        "artifacts": ("File artifacts", os.getenv("METAOPS_ARTIFACTS_DIR", "./data/artifacts")),
+    }
+
+    if target == "all":
+        to_reset = list(targets.keys())
+    else:
+        to_reset = [target]
+
+    # Confirmation
+    if not args.yes:
+        labels = [f"  - {targets[t][0]} ({targets[t][1]})" for t in to_reset]
+        print(f"Resetting:\n" + "\n".join(labels))
+        answer = input("Continue? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("Aborted.")
+            return
+
+    for t in to_reset:
+        label, path = targets[t]
+        p = Path(path)
+        if t in ("vector", "artifacts"):
+            # Directory: remove entire tree
+            if p.exists():
+                shutil.rmtree(p)
+                print(f"  [OK] {label}: removed {path}")
+            else:
+                print(f"  [--] {label}: not found, skipping")
+        else:
+            # SQLite file
+            if p.exists():
+                os.remove(p)
+                print(f"  [OK] {label}: removed {path}")
+            else:
+                print(f"  [--] {label}: not found, skipping")
+
+    print("Done. Databases will be recreated on next startup.")
+
+
 def run():
     parser = _build_parser()
     args = parser.parse_args()
+
+    # Handle db command synchronously (no asyncio needed)
+    if args.command == "db" and getattr(args, "db_action", None) == "reset":
+        _db_reset(args)
+        return
+
     try:
         asyncio.run(main(args))
     except (KeyboardInterrupt, asyncio.CancelledError):
