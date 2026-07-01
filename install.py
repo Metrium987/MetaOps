@@ -1,6 +1,6 @@
 """
-MetaOps — one-command setup
-Run: python install.py
+MetaOps — local installer (run inside the cloned repo)
+Usage: cd MetaOps && python install.py
 """
 import sys
 import os
@@ -8,9 +8,15 @@ import shutil
 import subprocess
 from pathlib import Path
 
-# Force UTF-8 on Windows consoles that default to cp1252
+# Force UTF-8 on Windows consoles
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+# ── Resolve project root ONCE ────────────────────────────────────────────────
+PROJECT_ROOT = Path(__file__).resolve().parent
+DATA_DIR     = PROJECT_ROOT / "data"
+ENV_FILE     = PROJECT_ROOT / ".env"
+ENV_EXAMPLE  = PROJECT_ROOT / ".env.example"
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 OK    = "\033[92m[OK]\033[0m"
@@ -48,7 +54,7 @@ header("3 / 7  Installing MetaOps + dependencies")
 info("Running: pip install -e .")
 result = subprocess.run(
     [sys.executable, "-m", "pip", "install", "-e", ".", "--quiet"],
-    capture_output=True, text=True
+    capture_output=True, text=True, cwd=str(PROJECT_ROOT)
 )
 if result.returncode != 0:
     print(result.stderr[-2000:])
@@ -78,7 +84,10 @@ header("5 / 7  Node MCP servers")
 npm = shutil.which("npm")
 if npm:
     info("Installing local MCP servers via npm (filesystem, memory)...")
-    r = subprocess.run([npm, "install", "@modelcontextprotocol/server-filesystem", "@modelcontextprotocol/server-memory", "--quiet"])
+    r = subprocess.run(
+        [npm, "install", "@modelcontextprotocol/server-filesystem", "@modelcontextprotocol/server-memory", "--quiet"],
+        cwd=str(PROJECT_ROOT)
+    )
     if r.returncode == 0:
         ok("MCP servers installed locally")
     else:
@@ -89,35 +98,24 @@ else:
 
 # ── 6. Data directories ───────────────────────────────────────────────────────
 header("6 / 7  Data directories")
-dirs = [
-    Path("data"),
-    Path("data/artifacts"),
-]
-for d in dirs:
-    d.mkdir(parents=True, exist_ok=True)
-ok("./data/  and  ./data/artifacts/  ready")
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+(DATA_DIR / "artifacts").mkdir(parents=True, exist_ok=True)
+ok(f"{DATA_DIR} ready")
 
 
 # ── 7. .env setup ─────────────────────────────────────────────────────────────
 header("7 / 7  Environment configuration")
-env_path     = Path(".env")
-example_path = Path(".env.example")
-
-if env_path.exists():
+if ENV_FILE.exists():
     ok(".env already exists — not overwritten")
-elif example_path.exists():
-    shutil.copy(example_path, env_path)
+elif ENV_EXAMPLE.exists():
+    shutil.copy(ENV_EXAMPLE, ENV_FILE)
     warn(".env created from .env.example — fill in your API keys before starting")
 else:
     warn("No .env found — create one from .env.example before starting")
 
 
 # ── Shell detection ───────────────────────────────────────────────────────────
-shell = (
-    shutil.which("bash") or
-    shutil.which("powershell") or
-    shutil.which("cmd")
-)
+shell = shutil.which("bash") or shutil.which("powershell") or shutil.which("cmd")
 if shell:
     ok(f"Shell detected: {shell}")
 else:
@@ -129,7 +127,7 @@ header("Smoke test")
 info("Verifying install in a fresh Python process...")
 r = subprocess.run(
     [sys.executable, "-c", "from metaops.config import MetaOpsConfig; MetaOpsConfig()"],
-    capture_output=True, text=True,
+    capture_output=True, text=True, cwd=str(PROJECT_ROOT)
 )
 if r.returncode != 0:
     print(r.stderr.strip())
@@ -141,7 +139,9 @@ ok("MetaOps imports correctly")
 print(f"""
 {BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   MetaOps is ready.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}
+
+  Location : {PROJECT_ROOT}
 
   Next steps:
   1. Fill in your API keys in  .env
