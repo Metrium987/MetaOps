@@ -5,7 +5,6 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from google.adk.runners import Runner
 from google.adk.events import Event
-from google.genai import types
 from google.adk.agents.run_config import RunConfig
 from metaops.gateway.base import BaseGateway
 from google.adk.sessions import BaseSessionService
@@ -107,7 +106,6 @@ class TelegramBridge(BaseGateway):
             self._initialized_sessions.add(session_id)
 
     def _get_pending_queue(self, session_id: str) -> asyncio.Queue:
-        """Get or create a pending message queue for a session."""
         if session_id not in self._pending:
             self._pending[session_id] = asyncio.Queue(maxsize=self._config.max_pending_messages)
         return self._pending[session_id]
@@ -125,8 +123,6 @@ class TelegramBridge(BaseGateway):
 
         session_id = self.session_manager.get_session_id("telegram", user_id)
 
-        # Mid-turn injection: if session is busy, queue the message instead
-        # of rejecting it.  It will be injected after the current turn.
         if self.session_manager.is_busy(session_id):
             queue = self._get_pending_queue(session_id)
             try:
@@ -145,10 +141,18 @@ class TelegramBridge(BaseGateway):
 
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         await self._ensure_session(user_id, session_id, user.first_name or user_id)
+        self.session_manager.set_busy(session_id, True)
 
+        # Spawn background task so the handler returns immediately and
+        # Telegram polling + other users are not blocked during the LLM call.
+        asyncio.create_task(
+            self._process_message(user_id, session_id, chat_id, user_input)
+        )
+
+    async def _process_message(self, user_id: str, session_id: str, chat_id: int, user_input: str):
+        """Background task: run the agent and send the response."""
         checkpoint = SessionCheckpoint(f"telegram:{user_id}")
         try:
-            self.session_manager.set_busy(session_id, True)
             text, error_code = await run_turn_with_continuation(
                 runner=self.runner,
                 user_id=user_id,
@@ -159,17 +163,17 @@ class TelegramBridge(BaseGateway):
             checkpoint.save({"last_user_input": user_input, "last_response": text[:2000]})
             if text:
                 for i in range(0, len(text), 4000):
-                    await context.bot.send_message(chat_id=chat_id, text=text[i : i + 4000])
+                    await self.application.bot.send_message(chat_id=chat_id, text=text[i : i + 4000])
             elif has_budget_exhausted(error_code):
-                await context.bot.send_message(chat_id=chat_id, text="Response was consumed by internal reasoning. Please retry with a simpler request.")
+                await self.application.bot.send_message(chat_id=chat_id, text="Response was consumed by internal reasoning. Please retry with a simpler request.")
         except Exception as exc:
             logger.error("Error for user %s: %s", user_id, exc)
-            await context.bot.send_message(chat_id=chat_id, text=f"System Error: {exc}")
+            await self.application.bot.send_message(chat_id=chat_id, text=f"System Error: {exc}")
         finally:
             self.session_manager.set_busy(session_id, False)
-            await self._drain_pending(session_id, user_id, context)
+            await self._drain_pending(session_id, user_id)
 
-    async def _drain_pending(self, session_id: str, user_id: str, context: ContextTypes.DEFAULT_TYPE):
+    async def _drain_pending(self, session_id: str, user_id: str):
         """Process queued messages after the current turn completes."""
         queue = self._pending.get(session_id)
         if not queue or queue.empty():
@@ -189,9 +193,9 @@ class TelegramBridge(BaseGateway):
                     )
                     if text:
                         for i in range(0, len(text), 4000):
-                            await context.bot.send_message(chat_id=chat_id, text=text[i : i + 4000])
+                            await self.application.bot.send_message(chat_id=chat_id, text=text[i : i + 4000])
                     elif has_budget_exhausted(error_code):
-                        await context.bot.send_message(chat_id=chat_id, text="Response was consumed by internal reasoning. Please retry.")
+                        await self.application.bot.send_message(chat_id=chat_id, text="Response was consumed by internal reasoning. Please retry.")
                 finally:
                     self.session_manager.set_busy(session_id, False)
             except asyncio.QueueEmpty:
