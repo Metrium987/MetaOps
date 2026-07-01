@@ -294,15 +294,11 @@ class ModelConfig:
         from google.adk.models import LiteLlm
         model = self.model
         # For OpenAI-compatible providers (KiloCode, OpenCode, OpenRouter, etc.),
-        # always route through the openai/ prefix so LiteLLM sends requests to
-        # the correct base_url. Model names like "nvidia/nemotron-3-super-120b:free"
-        # are KiloCode's internal format, NOT LiteLLM provider prefixes.
-        if self.provider in _OPENAI_COMPATIBLE_PROVIDERS:
-            # Strip any existing provider prefix that isn't "openai/"
-            if "/" in model and not model.startswith("openai/"):
-                model = model.split("/", 1)[1]
-            if not model.startswith("openai/"):
-                model = f"openai/{model}"
+        # route through openai/ prefix so LiteLLM sends to the correct base_url.
+        # The model name after openai/ is passed AS-IS to the API — never strip
+        # vendor prefixes like nvidia/, stepfun/, etc.
+        if self.provider in _OPENAI_COMPATIBLE_PROVIDERS and not model.startswith("openai/"):
+            model = f"openai/{model}"
         kwargs = {}
         if self.api_key:
             kwargs["api_key"] = self.api_key
