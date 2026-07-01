@@ -259,9 +259,12 @@ for tool_bin, package in [("bandit", "bandit"), ("pip-audit", "pip-audit")]:
 # ── 5. First-run setup ────────────────────────────────────────────────────────
 header("5 / 5  First-run setup")
 
-Path("data").mkdir(parents=True, exist_ok=True)
-Path("data/artifacts").mkdir(parents=True, exist_ok=True)
-ok("./data/ directories created")
+# Use REPO_ABS to guarantee data/ lands inside the project, not in $HOME.
+# Previous versions used Path("data") which resolved relative to $HOME when
+# the script was piped via curl | python (os.chdir doesn't survive subprocess).
+(REPO_ABS / "data").mkdir(parents=True, exist_ok=True)
+(REPO_ABS / "data" / "artifacts").mkdir(parents=True, exist_ok=True)
+ok(f"{REPO_ABS / 'data'} directories created")
 
 env     = Path(".env")
 example = Path(".env.example")
