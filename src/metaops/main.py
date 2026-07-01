@@ -185,10 +185,15 @@ async def main(args: argparse.Namespace):
             print("MetaOps Telegram gateway running. Press Ctrl+C to stop.")
             await asyncio.Event().wait()
         else:
-            cli_bridge = CLIBridge(runner=runner, session_manager=session_manager)
+            # Pass runner=None for lazy init — the CLI creates it on first
+            # message so the prompt appears instantly instead of waiting for
+            # ChromaDB + MCP servers + model loading at startup.
+            cli_bridge = CLIBridge(runner=None, session_manager=session_manager)
             registry.register("cli", cli_bridge)
             registry.set_active("cli", True)
             await cli_bridge.start()
+            # Runner may have been created lazily — grab it for cleanup
+            runner = cli_bridge._runner or runner
     finally:
         registry.set_active("telegram", False)
         registry.set_active("cli", False)
@@ -206,6 +211,8 @@ async def _close_mcp_toolsets(runner) -> None:
     startup are never explicitly stopped and rely entirely on the OS
     reaping them when the parent process exits.
     """
+    if runner is None:
+        return
     from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 
     for tool in runner.agent.tools:
