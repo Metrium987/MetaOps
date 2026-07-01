@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 
@@ -298,10 +299,21 @@ class MetaOpsConfig:
         self.workstream   = ModelConfig("METAOPS_WORKSTREAM_MODEL",   "METAOPS_WORKSTREAM_PROVIDER",   "openai/gpt-4o-mini")
         self.auditor      = ModelConfig("METAOPS_AUDITOR_MODEL",      "METAOPS_AUDITOR_PROVIDER",      "openai/gpt-4o-mini")
 
-        # Database paths
-        self.sessions_db: str  = os.getenv("METAOPS_SESSIONS_DB",  "./data/metaops_sessions.db")
-        self.skills_db: str    = os.getenv("METAOPS_SKILLS_DB",    "./data/metaops_skills.db")
-        self.vector_db: str    = os.getenv("METAOPS_VECTOR_DB",    "./data/metaops_vector_db")
+        # Database paths — resolve relative to project root, not cwd.
+        # This prevents DBs from being created in $HOME when launched from there.
+        _project_root = Path(__file__).resolve().parent.parent.parent
+        _data = _project_root / "data"
+
+        def _resolve_db_path(env_key: str, default_name: str) -> str:
+            raw = os.getenv(env_key, str(_data / default_name))
+            p = Path(raw)
+            if not p.is_absolute():
+                p = _project_root / p
+            return str(p)
+
+        self.sessions_db: str  = _resolve_db_path("METAOPS_SESSIONS_DB",  "metaops_sessions.db")
+        self.skills_db: str    = _resolve_db_path("METAOPS_SKILLS_DB",    "metaops_skills.db")
+        self.vector_db: str    = _resolve_db_path("METAOPS_VECTOR_DB",    "metaops_vector_db")
 
         # Embeddings
         self.embedding_provider: str = os.getenv("METAOPS_EMBEDDING_PROVIDER", "local")
