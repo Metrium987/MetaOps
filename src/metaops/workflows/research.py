@@ -37,7 +37,9 @@ from metaops.tools.web_search import (
 logger = logging.getLogger(__name__)
 config = get_config()
 
-MAX_REFINEMENT_ITERATIONS = 3
+
+def _get_max_refinement_iterations() -> int:
+    return config.max_refinement_iterations
 
 
 class ResearchFeedback(BaseModel):
@@ -146,7 +148,7 @@ researcher_refiner = Agent(
 refinement_loop = LoopAgent(
     name="research_refinement_loop",
     sub_agents=[research_evaluator, EscalationChecker(), researcher_refiner],
-    max_iterations=MAX_REFINEMENT_ITERATIONS,
+    max_iterations=_get_max_refinement_iterations(),
 )
 
 research_pipeline = SequentialAgent(
@@ -203,7 +205,9 @@ async def deep_research(query: str) -> dict:
     Pipeline: researcher gathers raw material from multiple sources using
     search, extraction, and crawling; a bounded evaluate/refine loop grades
     the research and runs follow-up searches on gaps (up to
-    MAX_REFINEMENT_ITERATIONS); synthesizer then produces a clean report.
+    The researcher gathers raw material; a bounded evaluate/refine loop grades
+    the research and runs follow-up searches on gaps; synthesizer then produces
+    a clean report.
 
     Args:
         query: The research question. Include constraints, versions, or domain

@@ -18,9 +18,10 @@ from metaops.core.reasoning_guard import REASONING_BUDGET_EXHAUSTED
 
 logger = logging.getLogger(__name__)
 
-# Mirrors the continuation-retry cap used by reference agent runtimes (e.g.
-# Hermes) for responses truncated mid-answer by the max_tokens budget.
-MAX_CONTINUATIONS = 3
+
+def _get_max_continuations() -> int:
+    from metaops.config import get_config
+    return get_config().max_continuations
 
 CONTINUE_PROMPT = (
     "Your previous response was cut off by the output token limit. "
@@ -92,9 +93,10 @@ async def run_turn_with_continuation(
 
     truncated = await _run_one(message_text)
     continuations = 0
-    while truncated and not has_budget_exhausted(last_error_code) and continuations < MAX_CONTINUATIONS:
+    max_cont = _get_max_continuations()
+    while truncated and not has_budget_exhausted(last_error_code) and continuations < max_cont:
         continuations += 1
-        logger.info("Output truncated — continuation (%d/%d)", continuations, MAX_CONTINUATIONS)
+        logger.info("Output truncated — continuation (%d/%d)", continuations, max_cont)
         last_error_code = None
         truncated = await _run_one(CONTINUE_PROMPT)
 

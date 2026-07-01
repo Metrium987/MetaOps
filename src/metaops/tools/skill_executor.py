@@ -55,11 +55,11 @@ async def execute_skill(skill_name: str, arguments: str = "", tool_context: Tool
     async for chunk in _backend.execute_stream(command):
         output_buffer.append(chunk)
     raw_output = "".join(output_buffer)
-    # Check for explicit error markers rather than substring matching
-    # (avoids false positives from "error handling" text in output).
     lower = raw_output.lower()
     status = "error" if any(marker in lower for marker in ["traceback", "exception:", "fatal error"]) else "success"
-    return {"status": status, "summary": raw_output[-500:]}
+    from metaops.config import get_config
+    max_chars = get_config().skill_summary_max_chars
+    return {"status": status, "summary": raw_output[-max_chars:]}
 
 skill_executor_tool = FunctionTool(func=execute_skill)
 

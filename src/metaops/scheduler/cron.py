@@ -6,10 +6,13 @@ from google.genai import types
 from typing import Callable, Awaitable
 import logging
 
+from metaops.config import get_config
+
 logger = logging.getLogger(__name__)
 
-# Safety limit: prevent runaway cron jobs from consuming unlimited LLM calls
-_CRON_RUN_CONFIG = RunConfig(max_llm_calls=30)
+
+def _make_cron_run_config() -> RunConfig:
+    return RunConfig(max_llm_calls=get_config().cron_max_llm_calls)
 
 
 class MetaOpsCronScheduler:
@@ -26,7 +29,7 @@ class MetaOpsCronScheduler:
         content = types.Content(role='user', parts=[types.Part(text=prompt)])
         try:
             final_output = []
-            async for event in self.runner.run_async(user_id="system_cron", session_id=session_id, new_message=content, run_config=_CRON_RUN_CONFIG):
+            async for event in self.runner.run_async(user_id="system_cron", session_id=session_id, new_message=content, run_config=_make_cron_run_config()):
                 if event.is_final_response() and event.content and event.content.parts:
                     text = "".join([
                         part.text for part in event.content.parts

@@ -6,9 +6,10 @@ from typing import AsyncGenerator
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT_SECONDS = 120
-DEFAULT_MAX_OUTPUT_BYTES = 256_000
-KILL_REAP_TIMEOUT_SECONDS = 5
+# Defaults are read from MetaOpsConfig at call time to stay configurable.
+_DEFAULT_TIMEOUT_SECONDS = 120
+_DEFAULT_MAX_OUTPUT_BYTES = 256_000
+_KILL_REAP_TIMEOUT_SECONDS = 5
 
 
 def _detect_shell() -> str | None:
@@ -29,19 +30,22 @@ class LocalTerminalBackend:
     async def execute_stream(
         self,
         command: str,
-        timeout: float = DEFAULT_TIMEOUT_SECONDS,
-        max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+        timeout: float | None = None,
+        max_output_bytes: int | None = None,
     ) -> AsyncGenerator[str, None]:
         """Run `command` in a shell and stream decoded output lines.
 
         Bounded on two axes so a single tool call can't hang or balloon the
         process's memory: a wall-clock timeout, and a cap on total output
-        bytes (a runaway command like `yes` would otherwise accumulate
-        unbounded output in the caller before any truncation happens). The
-        subprocess is always killed and reaped on any exit path — normal
-        completion, timeout, output cap, or the generator being cancelled/
-        closed by its caller — to avoid leaking zombie/orphan processes.
+        bytes.
         """
+        from metaops.config import get_config
+        cfg = get_config()
+        if timeout is None:
+            timeout = cfg.shell_timeout
+        if max_output_bytes is None:
+            max_output_bytes = cfg.shell_max_output_bytes
+        kill_timeout = cfg.shell_kill_timeout
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
@@ -79,12 +83,12 @@ class LocalTerminalBackend:
                 # closing, not on the shell's own exit. Don't let that hang
                 # the agent turn; give up after a short grace period.
                 try:
-                    await asyncio.wait_for(process.wait(), timeout=KILL_REAP_TIMEOUT_SECONDS)
+                    await asyncio.wait_for(process.wait(), timeout=kill_timeout)
                 except asyncio.TimeoutError:
                     logger.warning(
                         "Process %s did not exit within %ss of being killed "
                         "(likely an orphaned child still holding the output pipe)",
-                        process.pid, KILL_REAP_TIMEOUT_SECONDS,
+                        process.pid, kill_timeout,
                     )
             else:
                 await process.wait()

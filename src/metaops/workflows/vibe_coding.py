@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 config = get_config()
 
-MAX_REVISIONS = 3
+
+def _get_max_revisions() -> int:
+    return config.max_revisions
 
 # ---------------------------------------------------------------------------
 # Agents
@@ -93,7 +95,7 @@ async def vibe_code(task: str, tool_context: ToolContext = None) -> dict:
     coder_output = await run_agent_once(coder_agent, task)
     logger.info("Coder produced initial code (%d chars)", len(coder_output))
 
-    for revision in range(MAX_REVISIONS):
+    for revision in range(_get_max_revisions()):
         # Step 2: Review
         review_prompt = (
             f"## Original Task\n{task}\n\n"
@@ -112,7 +114,7 @@ async def vibe_code(task: str, tool_context: ToolContext = None) -> dict:
         # Step 3: Revise based on feedback
         logger.info(
             "Reviewer rejected — revision %d/%d — feedback: %s",
-            revision + 1, MAX_REVISIONS, review.strip()[:500],
+            revision + 1, _get_max_revisions(), review.strip()[:500],
         )
         revision_prompt = (
             f"## Original Task\n{task}\n\n"
@@ -125,12 +127,12 @@ async def vibe_code(task: str, tool_context: ToolContext = None) -> dict:
     logger.warning(
         "Vibe coding reached max revisions (%d) without approval. "
         "Returning last attempt.",
-        MAX_REVISIONS,
+        _get_max_revisions(),
     )
     return {
         "code": coder_output,
         "approved": False,
-        "revisions": MAX_REVISIONS,
+        "revisions": _get_max_revisions(),
         "last_review_feedback": review,
     }
 

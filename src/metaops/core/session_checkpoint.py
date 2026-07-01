@@ -19,19 +19,18 @@ logger = logging.getLogger(__name__)
 
 _CHECKPOINT_DIR = Path(os.getenv("METAOPS_CHECKPOINT_DIR", "~/.metaops/checkpoints")).expanduser()
 
-# Checkpoints older than this are auto-cleaned on save (default: 24 hours)
-_CHECKPOINT_TTL_SECONDS = 86400
 
-
-def cleanup_stale_checkpoints(max_age_seconds: int = _CHECKPOINT_TTL_SECONDS) -> int:
-    """Remove checkpoint files older than max_age_seconds. Returns count removed."""
+def cleanup_stale_checkpoints() -> int:
+    """Remove checkpoint files older than config.checkpoint_ttl_hours. Returns count removed."""
     if not _CHECKPOINT_DIR.exists():
         return 0
+    from metaops.config import get_config
+    max_age = get_config().checkpoint_ttl_hours * 3600
     now = time.time()
     removed = 0
     for f in _CHECKPOINT_DIR.glob("*.json"):
         try:
-            if now - f.stat().st_mtime > max_age_seconds:
+            if now - f.stat().st_mtime > max_age:
                 f.unlink()
                 removed += 1
         except OSError:

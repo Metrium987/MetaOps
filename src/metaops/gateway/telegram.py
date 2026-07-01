@@ -15,14 +15,13 @@ from metaops.core.continuation import (
     has_budget_exhausted,
 )
 from metaops.core.session_checkpoint import SessionCheckpoint
+from metaops.config import get_config
 
 logger = logging.getLogger(__name__)
 
-# Max queued messages per session before rejecting
-_MAX_PENDING = 5
 
-# Safety limit: prevent infinite LLM loops per user turn
-_DEFAULT_RUN_CONFIG = RunConfig(max_llm_calls=50)
+def _make_run_config() -> RunConfig:
+    return RunConfig(max_llm_calls=get_config().gateway_max_llm_calls)
 
 
 class TelegramBridge(BaseGateway):
@@ -40,10 +39,6 @@ class TelegramBridge(BaseGateway):
         self.token = token
         self._session_service = session_service
         self.default_role = default_role
-        # None = no allowlist configured (open to anyone who can message the
-        # bot — fine for a private dev bot, but anyone with the bot's
-        # username can reach it regardless of "local network" intentions).
-        # Set METAOPS_TELEGRAM_ALLOWED_USERS to restrict.
         self.allowed_user_ids = allowed_user_ids
         if self.allowed_user_ids is None:
             logger.warning(
@@ -52,10 +47,9 @@ class TelegramBridge(BaseGateway):
                 default_role,
             )
         self._initialized_sessions: set = set()
-        # Mid-turn message queue: when a session is busy, incoming messages
-        # are queued here and injected into the active turn after completion.
         self._pending: dict[str, asyncio.Queue] = {}
         self.application = Application.builder().token(token).build()
+        self._config = get_config()
 
     async def start(self):
         self.application.add_handler(CommandHandler("start", self.cmd_start))
@@ -112,7 +106,7 @@ class TelegramBridge(BaseGateway):
     def _get_pending_queue(self, session_id: str) -> asyncio.Queue:
         """Get or create a pending message queue for a session."""
         if session_id not in self._pending:
-            self._pending[session_id] = asyncio.Queue(maxsize=_MAX_PENDING)
+            self._pending[session_id] = asyncio.Queue(maxsize=self._config.max_pending_messages)
         return self._pending[session_id]
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -137,7 +131,7 @@ class TelegramBridge(BaseGateway):
                 count = queue.qsize()
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"Queued ({count}/{_MAX_PENDING}). Your message will be processed after the current turn."
+                    text=f"Queued ({count}/{self._config.max_pending_messages}). Your message will be processed after the current turn."
                 )
             except asyncio.QueueFull:
                 await context.bot.send_message(
@@ -157,7 +151,7 @@ class TelegramBridge(BaseGateway):
                 user_id=user_id,
                 session_id=session_id,
                 message_text=user_input,
-                run_config=_DEFAULT_RUN_CONFIG,
+                run_config=_make_run_config(),
             )
             checkpoint.save({"last_user_input": user_input, "last_response": text[:2000]})
             if text:
@@ -188,7 +182,7 @@ class TelegramBridge(BaseGateway):
                         user_id=user_id,
                         session_id=session_id,
                         message_text=msg_text,
-                        run_config=_DEFAULT_RUN_CONFIG,
+                        run_config=_make_run_config(),
                     )
                     if text:
                         for i in range(0, len(text), 4000):

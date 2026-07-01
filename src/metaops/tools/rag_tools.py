@@ -40,13 +40,9 @@ async def ingest_file_dependency(file_path: str, description: str, tool_context:
         return {"status": "error", "message": f"File not found: {file_path}"}
 
     content = abs_path.read_text(encoding='utf-8', errors='ignore')
-        
-    # ADK has no public app_name accessor on ToolContext (only user_id) —
-    # _invocation_context.app_name is what ADK's own Context methods use internally.
-    app_name = tool_context._invocation_context.app_name
-    user_id = tool_context.user_id
 
-    chunk_size = 1000
+    from metaops.config import get_config
+    chunk_size = get_config().rag_chunk_size
     chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
     ids = [f"{os.path.basename(file_path)}_{i}" for i in range(len(chunks))]
     metadatas = [

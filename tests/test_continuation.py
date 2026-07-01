@@ -2,18 +2,18 @@
 
 import pytest
 from metaops.core.continuation import (
-    MAX_CONTINUATIONS,
     CONTINUE_PROMPT,
     filter_thought_parts,
     is_truncated,
     has_budget_exhausted,
+    _get_max_continuations,
 )
 from metaops.core.reasoning_guard import REASONING_BUDGET_EXHAUSTED
 
 
 class TestConstants:
     def test_max_continuations_is_positive(self):
-        assert MAX_CONTINUATIONS > 0
+        assert _get_max_continuations() > 0
 
     def test_continue_prompt_is_string(self):
         assert isinstance(CONTINUE_PROMPT, str)

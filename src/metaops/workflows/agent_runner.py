@@ -15,11 +15,11 @@ from google.adk.artifacts import InMemoryArtifactService
 from google.genai import types
 
 from metaops.core.continuation import (
-    MAX_CONTINUATIONS,
     CONTINUE_PROMPT,
     filter_thought_parts,
     is_truncated,
     has_budget_exhausted,
+    _get_max_continuations,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,11 +96,12 @@ async def run_agent_once(agent: Agent, prompt: str) -> str:
     truncated = await _run_turn(prompt)
 
     continuations = 0
-    while truncated and not has_budget_exhausted(last_error_code) and continuations < MAX_CONTINUATIONS:
+    max_cont = _get_max_continuations()
+    while truncated and not has_budget_exhausted(last_error_code) and continuations < max_cont:
         continuations += 1
         logger.info(
             "Agent '%s' output truncated — requesting continuation (%d/%d)",
-            agent.name, continuations, MAX_CONTINUATIONS,
+            agent.name, continuations, max_cont,
         )
         last_error_code = None
         last_error_message = None

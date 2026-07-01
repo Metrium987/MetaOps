@@ -184,7 +184,7 @@ def create_runner() -> Runner:
         planner = BuiltInPlanner(
             thinking_config=types.ThinkingConfig(
                 include_thoughts=True,
-                thinking_budget=2048,
+                thinking_budget=config.thinking_budget,
             )
         )
 
@@ -243,8 +243,8 @@ def create_runner() -> Runner:
     # Events compaction: summarize old events to prevent context overflow.
     # Compacts every 20 invocations, keeping 3 invocations of overlap for context.
     compaction_config = EventsCompactionConfig(
-        compaction_interval=20,
-        overlap_size=3,
+        compaction_interval=config.compact_interval,
+        overlap_size=config.compact_overlap,
     )
 
     app = App(

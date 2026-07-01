@@ -332,19 +332,13 @@ class MetaOpsConfig:
         self.mcp_server_url: str = os.getenv("MCP_SERVER_URL", "http://localhost:8000/sse")
 
         # Comma-separated Telegram numeric user IDs allowed to use the bot.
-        # Unset = open to anyone who can message the bot (fine for a private
-        # dev bot, but note a Telegram bot is reachable by anyone who knows
-        # its username — "local network" does not limit who can message it).
         _allowed = os.getenv("METAOPS_TELEGRAM_ALLOWED_USERS", "")
         self.telegram_allowed_user_ids: Optional[set[str]] = (
             {u.strip() for u in _allowed.split(",") if u.strip()} or None
         )
 
-        # Default role configs (can be overridden in .env)
+        # Default role configs
         self.default_cli_role: str = os.getenv("METAOPS_DEFAULT_CLI_ROLE", "admin")
-        # Unsupervised nightly job — non-admin by default so a misbehaving
-        # prompt/tool can't get unrestricted shell access while no one is
-        # watching. Override explicitly if the audit job needs more.
         self.default_cron_role: str = os.getenv("METAOPS_DEFAULT_CRON_ROLE", "user")
         self.default_telegram_role: str = os.getenv("METAOPS_DEFAULT_TELEGRAM_ROLE", "admin")
 
@@ -353,8 +347,7 @@ class MetaOpsConfig:
         self.workstream   = ModelConfig("METAOPS_WORKSTREAM_MODEL",   "METAOPS_WORKSTREAM_PROVIDER",   "openai/gpt-4o-mini")
         self.auditor      = ModelConfig("METAOPS_AUDITOR_MODEL",      "METAOPS_AUDITOR_PROVIDER",      "openai/gpt-4o-mini")
 
-        # Database paths — resolve relative to project root, not cwd.
-        # This prevents DBs from being created in $HOME when launched from there.
+        # Database paths
         _project_root = Path(__file__).resolve().parent.parent.parent
         _data = _project_root / ".data"
 
@@ -375,6 +368,48 @@ class MetaOpsConfig:
         self.embedding_base_url: str = os.getenv("METAOPS_EMBEDDING_BASE_URL", "https://openrouter.ai/api/v1")
         _embed_key = os.getenv("METAOPS_EMBEDDING_API_KEY") or os.getenv("OPENROUTER_API_KEY")
         self.embedding_api_key: Optional[str] = _embed_key
+
+        # ── Runtime tunables (all overridable via .env) ──────────────────
+
+        # BuiltInPlanner thinking budget for Gemini/Anthropic (tokens)
+        self.thinking_budget: int = int(os.getenv("METAOPS_THINKING_BUDGET", "2048"))
+
+        # Context compaction
+        self.compact_interval: int = int(os.getenv("METAOPS_COMPACT_INTERVAL", "20"))
+        self.compact_overlap: int  = int(os.getenv("METAOPS_COMPACT_OVERLAP", "3"))
+
+        # Continuation / revision limits
+        self.max_continuations: int = int(os.getenv("METAOPS_MAX_CONTINUATIONS", "3"))
+        self.max_revisions: int = int(os.getenv("METAOPS_MAX_REVISIONS", "3"))
+        self.max_refinement_iterations: int = int(os.getenv("METAOPS_MAX_REFINEMENT_ITERATIONS", "3"))
+
+        # LLM call safety limits
+        self.gateway_max_llm_calls: int = int(os.getenv("METAOPS_GATEWAY_MAX_LLM_CALLS", "50"))
+        self.cron_max_llm_calls: int    = int(os.getenv("METAOPS_CRON_MAX_LLM_CALLS", "30"))
+
+        # Telegram queue
+        self.max_pending_messages: int = int(os.getenv("METAOPS_MAX_PENDING_MESSAGES", "5"))
+
+        # Checkpoint TTL (hours)
+        self.checkpoint_ttl_hours: int = int(os.getenv("METAOPS_CHECKPOINT_TTL_HOURS", "24"))
+
+        # Shell execution
+        self.shell_timeout: int = int(os.getenv("METAOPS_SHELL_TIMEOUT", "120"))
+        self.shell_max_output_bytes: int = int(os.getenv("METAOPS_SHELL_MAX_OUTPUT_BYTES", "256000"))
+        self.shell_kill_timeout: int = int(os.getenv("METAOPS_SHELL_KILL_TIMEOUT", "5"))
+
+        # Tool output limits
+        self.tool_output_max_chars: int = int(os.getenv("METAOPS_TOOL_OUTPUT_MAX_CHARS", "2000"))
+
+        # RAG chunking
+        self.rag_chunk_size: int = int(os.getenv("METAOPS_RAG_CHUNK_SIZE", "1000"))
+
+        # Skill summary display
+        self.skill_summary_max_chars: int = int(os.getenv("METAOPS_SKILL_SUMMARY_MAX_CHARS", "500"))
+
+        # Audit limits
+        self.audit_max_files: int = int(os.getenv("METAOPS_AUDIT_MAX_FILES", "150"))
+        self.audit_file_max_lines: int = int(os.getenv("METAOPS_AUDIT_FILE_MAX_LINES", "8000"))
 
     def validate_keys(self) -> bool:
         if not self.coordinator.api_key:

@@ -15,10 +15,13 @@ async def execute_secure_command(command: str, tool_context: ToolContext) -> dic
     if error:
         return {"status": "error", "message": error}
 
+    from metaops.config import get_config
+    max_chars = get_config().tool_output_max_chars
+
     output = []
     async for chunk in _backend.execute_stream(command):
         output.append(chunk)
-    return {"status": "success", "output": "".join(output)[-2000:]}
+    return {"status": "success", "output": "".join(output)[-max_chars:]}
 
 class SecureMetaOpsToolset(BaseToolset):
     def __init__(self):

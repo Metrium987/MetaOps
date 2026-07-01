@@ -8,11 +8,7 @@ config = get_config()
 _backend = LocalTerminalBackend()
 
 async def execute_workstream_command(command: str, tool_context: ToolContext = None) -> dict:
-    """Execute a long-running shell pipeline and return its output.
-
-    Use for multi-step bash pipelines that may take more than a few seconds.
-    Output is capped at 2000 characters (tail).
-    """
+    """Execute a long-running shell pipeline and return its output."""
     user_role = "guest"
     if tool_context and tool_context.state:
         user_role = tool_context.state.get("user:role", "guest")
@@ -20,10 +16,13 @@ async def execute_workstream_command(command: str, tool_context: ToolContext = N
     if error:
         return {"status": "error", "message": error}
 
+    from metaops.config import get_config
+    max_chars = get_config().tool_output_max_chars
+
     output = []
     async for chunk in _backend.execute_stream(command):
         output.append(chunk)
-    return {"status": "success", "output": "".join(output)[-2000:]}
+    return {"status": "success", "output": "".join(output)[-max_chars:]}
 
 _workstream_terminal_tool = LongRunningFunctionTool(func=execute_workstream_command)
 

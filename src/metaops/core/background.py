@@ -20,6 +20,8 @@ _IGNORE_DIRS = {"__pycache__", ".venv", "venv", "node_modules", ".git", "dist", 
 
 
 def _list_source_files(directory: str, extensions: str) -> dict:
+    from metaops.config import get_config
+    max_files = get_config().audit_max_files
     ext_list = [e.strip() for e in extensions.split(",")]
     files: list[str] = []
     for ext in ext_list:
@@ -28,7 +30,7 @@ def _list_source_files(directory: str, extensions: str) -> dict:
         f for f in files
         if not any(ig in Path(f).parts for ig in _IGNORE_DIRS)
     ]
-    return {"files": sorted(filtered)[:150], "total": len(filtered)}
+    return {"files": sorted(filtered)[:max_files], "total": len(filtered)}
 
 
 async def list_source_files(directory: str = "src", extensions: str = ".py,.ts,.js") -> dict:
@@ -37,9 +39,11 @@ async def list_source_files(directory: str = "src", extensions: str = ".py,.ts,.
 
 
 def _read_source_file(path: str) -> dict:
+    from metaops.config import get_config
+    max_lines = get_config().audit_file_max_lines
     try:
         content = Path(path).read_text(encoding="utf-8", errors="replace")
-        return {"path": path, "content": content[:8000], "lines": content.count("\n")}
+        return {"path": path, "content": content[:max_lines * 80], "lines": content.count("\n")}
     except Exception as exc:
         return {"path": path, "error": str(exc)}
 
@@ -81,10 +85,11 @@ def _run_static_analysis(tool: str, target: str) -> dict:
             timeout=90,
         )
         output = proc.stdout or proc.stderr
+        from metaops.config import get_config
         return {
             "tool": tool,
             "exit_code": proc.returncode,
-            "output": output[:6000],
+            "output": output[:get_config().tool_output_max_chars],
         }
     except FileNotFoundError:
         return {"tool": tool, "status": "not_installed", "output": f"{tool} not found — skipping"}

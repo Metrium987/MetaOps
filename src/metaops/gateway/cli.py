@@ -11,9 +11,11 @@ from metaops.core.continuation import (
     has_budget_exhausted,
 )
 from metaops.core.session_checkpoint import SessionCheckpoint
+from metaops.config import get_config
 
-# Safety limit: prevent infinite LLM loops per user turn
-_DEFAULT_RUN_CONFIG = RunConfig(max_llm_calls=50)
+
+def _make_run_config() -> RunConfig:
+    return RunConfig(max_llm_calls=get_config().gateway_max_llm_calls)
 
 class CLIBridge(BaseGateway):
     def __init__(self, runner: Runner, session_manager: SessionManager):
@@ -46,7 +48,7 @@ class CLIBridge(BaseGateway):
                     user_id=self.user_id,
                     session_id=session_id,
                     message_text=user_input,
-                    run_config=_DEFAULT_RUN_CONFIG,
+                    run_config=_make_run_config(),
                 )
                 checkpoint.save({"last_user_input": user_input, "last_response": text[:2000]})
                 if text:
