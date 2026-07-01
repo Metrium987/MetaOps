@@ -167,6 +167,23 @@ pip install -e .
 
 ---
 
+## Uninstall
+
+```bash
+# Remove the project directory (code + venv + data + DBs)
+rm -rf ~/MetaOps
+
+# Remove global launcher if installed
+rm -f ~/.local/bin/metaops
+
+# Remove PATH entry from bashrc (if added)
+sed -i '/MetaOps/d' ~/.bashrc
+```
+
+This removes everything: source code, virtual environment, SQLite databases, ChromaDB vector store, generated artifacts, and the global launcher.
+
+---
+
 ## Configuration
 
 Copy `.env.example` to `.env` and fill in your keys:
