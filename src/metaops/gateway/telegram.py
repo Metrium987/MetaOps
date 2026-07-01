@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional
 from telegram import Update
@@ -8,8 +9,18 @@ from google.genai import types
 from metaops.gateway.base import BaseGateway
 from google.adk.sessions import BaseSessionService
 from metaops.gateway.session_manager import SessionManager
+from metaops.core.continuation import (
+    MAX_CONTINUATIONS,
+    CONTINUE_PROMPT,
+    filter_thought_parts,
+    is_truncated,
+    has_budget_exhausted,
+)
 
 logger = logging.getLogger(__name__)
+
+# Max queued messages per session before rejecting
+_MAX_PENDING = 5
 
 
 class TelegramBridge(BaseGateway):
@@ -39,6 +50,9 @@ class TelegramBridge(BaseGateway):
                 default_role,
             )
         self._initialized_sessions: set = set()
+        # Mid-turn message queue: when a session is busy, incoming messages
+        # are queued here and injected into the active turn after completion.
+        self._pending: dict[str, asyncio.Queue] = {}
         self.application = Application.builder().token(token).build()
 
     async def start(self):
@@ -93,6 +107,12 @@ class TelegramBridge(BaseGateway):
                 )
             self._initialized_sessions.add(session_id)
 
+    def _get_pending_queue(self, session_id: str) -> asyncio.Queue:
+        """Get or create a pending message queue for a session."""
+        if session_id not in self._pending:
+            self._pending[session_id] = asyncio.Queue(maxsize=_MAX_PENDING)
+        return self._pending[session_id]
+
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         user_id = str(user.id)
@@ -106,11 +126,22 @@ class TelegramBridge(BaseGateway):
 
         session_id = self.session_manager.get_session_id("telegram", user_id)
 
+        # Mid-turn injection: if session is busy, queue the message instead
+        # of rejecting it.  It will be injected after the current turn.
         if self.session_manager.is_busy(session_id):
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="⚠️ Je suis en train de traiter votre message précédent. Veuillez patienter..."
-            )
+            queue = self._get_pending_queue(session_id)
+            try:
+                queue.put_nowait((user_input, chat_id))
+                count = queue.qsize()
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"Queued ({count}/{_MAX_PENDING}). Your message will be processed after the current turn."
+                )
+            except asyncio.QueueFull:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="Message queue full. Please wait for the current turn to complete."
+                )
             return
 
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
@@ -119,25 +150,76 @@ class TelegramBridge(BaseGateway):
         content = types.Content(role="user", parts=[types.Part(text=user_input)])
         try:
             self.session_manager.set_busy(session_id, True)
-            async for event in self.runner.run_async(
-                user_id=user_id, session_id=session_id, new_message=content
-            ):
-                if event.is_final_response() and event.content and event.content.parts:
-                    # Filter out parts that represent internal model reasoning (thought=True)
-                    text = "".join([
-                        part.text for part in event.content.parts 
-                        if part.text and not getattr(part, "thought", False)
-                    ])
-                    if text:
-                        for i in range(0, len(text), 4000):
-                            await context.bot.send_message(
-                                chat_id=chat_id, text=text[i : i + 4000]
-                            )
+            parts: list[str] = []
+            last_error_code = None
+
+            async def _run_turn(message_text: str) -> bool:
+                """Runs one turn. Returns True if truncated mid-answer."""
+                nonlocal last_error_code
+                turn_truncated = False
+                async for event in self.runner.run_async(
+                    user_id=user_id, session_id=session_id,
+                    new_message=types.Content(parts=[types.Part(text=message_text)]),
+                ):
+                    if event.error_code:
+                        last_error_code = event.error_code
+                    if is_truncated(event):
+                        turn_truncated = True
+                    if event.content:
+                        parts.extend(filter_thought_parts(event.content.parts))
+                return turn_truncated
+
+            truncated = await _run_turn(user_input)
+
+            continuations = 0
+            while truncated and not has_budget_exhausted(last_error_code) and continuations < MAX_CONTINUATIONS:
+                continuations += 1
+                logger.info("Telegram output truncated — requesting continuation (%d/%d)", continuations, MAX_CONTINUATIONS)
+                last_error_code = None
+                truncated = await _run_turn(CONTINUE_PROMPT)
+
+            text = "\n".join(parts)
+            if text:
+                for i in range(0, len(text), 4000):
+                    await context.bot.send_message(chat_id=chat_id, text=text[i : i + 4000])
+            elif has_budget_exhausted(last_error_code):
+                await context.bot.send_message(chat_id=chat_id, text="Response was consumed by internal reasoning. Please retry with a simpler request.")
         except Exception as exc:
             logger.error("Error for user %s: %s", user_id, exc)
             await context.bot.send_message(chat_id=chat_id, text=f"System Error: {exc}")
         finally:
             self.session_manager.set_busy(session_id, False)
+            # Process any queued messages from this session
+            await self._drain_pending(session_id, user_id, context)
+
+    async def _drain_pending(self, session_id: str, user_id: str, context: ContextTypes.DEFAULT_TYPE):
+        """Process queued messages after the current turn completes."""
+        queue = self._pending.get(session_id)
+        if not queue or queue.empty():
+            return
+        while not queue.empty():
+            try:
+                msg_text, chat_id = queue.get_nowait()
+                logger.info("Draining queued message for session %s", session_id)
+                # Re-trigger handle_message logic for the queued message
+                content = types.Content(role="user", parts=[types.Part(text=msg_text)])
+                self.session_manager.set_busy(session_id, True)
+                try:
+                    async for event in self.runner.run_async(
+                        user_id=user_id, session_id=session_id,
+                        new_message=content,
+                    ):
+                        if event.content:
+                            text = "".join(filter_thought_parts(event.content.parts))
+                            if text:
+                                for i in range(0, len(text), 4000):
+                                    await context.bot.send_message(chat_id=chat_id, text=text[i : i + 4000])
+                finally:
+                    self.session_manager.set_busy(session_id, False)
+            except asyncio.QueueEmpty:
+                break
+            except Exception as exc:
+                logger.error("Error processing queued message: %s", exc)
 
     async def send_direct_message(self, chat_id: str, text: str):
         if self.application and self.application.bot:

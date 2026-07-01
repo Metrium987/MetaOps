@@ -164,7 +164,7 @@ def create_runner() -> Runner:
         planner = BuiltInPlanner(
             thinking_config=types.ThinkingConfig(
                 include_thoughts=True,
-                thinking_budget=10240,
+                thinking_budget=2048,  # Leave ~6000 tokens for artifact (Anthropic API limit = 8192)
             )
         )
 

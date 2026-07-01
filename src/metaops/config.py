@@ -123,6 +123,13 @@ _OPENAI_COMPATIBLE_PROVIDERS = {
 # that tolerates missing tool_call id/name (common with small local models)
 _LOCAL_PROVIDERS = {"ollama", "lmstudio"}
 
+
+def _is_reasoning_model(model_name: str) -> bool:
+    """Check if a model is an OpenAI reasoning model (o3, o4, etc.)."""
+    import re
+    pattern = r"^(o3|o4|gpt-5)(?:$|[-.])"
+    return bool(re.match(pattern, model_name))
+
 # Providers that use the native Anthropic Messages API
 _ANTHROPIC_NATIVE_PROVIDERS = {"anthropic", "minimax"}
 
@@ -152,7 +159,10 @@ class ModelConfig:
         # (derived from model_env, e.g. METAOPS_COORDINATOR_MODEL ->
         # METAOPS_COORDINATOR_MAX_TOKENS).
         max_tokens_env = model_env.rsplit("_MODEL", 1)[0] + "_MAX_TOKENS"
-        self.max_tokens = int(os.getenv(max_tokens_env, "16000"))
+        # Provider-specific defaults: Anthropic API hard-limits at 8192,
+        # other providers tolerate larger budgets.
+        default_max = "8192" if self.provider in _ANTHROPIC_NATIVE_PROVIDERS else "16000"
+        self.max_tokens = int(os.getenv(max_tokens_env, default_max))
 
     # ── Native driver routing (fastest → slowest) ──────────────────────
     def to_model(self):
@@ -161,7 +171,10 @@ class ModelConfig:
         Priority:
           1. Native Anthropic SDK  (anthropic provider → AnthropicLlm)
           2. Native Google GenAI   (gemini provider → Gemini)
-          3. Native OpenAI SDK     (all OpenAI-compatible endpoints → OpenAILlm)
+          3. LiteLLM              (all OpenAI-compatible endpoints → LiteLlm)
+             Rationale: the native OpenAI driver (labs/openai) ignores
+             delta.reasoning_content in streaming, causing visual freezes
+             during thinking. LiteLLM extracts reasoning_content properly.
           4. LiteLLM fallback      (everything else)
         """
         # ── 1. Anthropic native ──
@@ -172,12 +185,12 @@ class ModelConfig:
         if self.provider in _GEMINI_NATIVE_PROVIDERS:
             return self._build_gemini()
 
-        # ── 3. OpenAI-compatible (SDK direct) ──
-        if self.provider in _OPENAI_COMPATIBLE_PROVIDERS:
-            return self._build_openai()
-
-        # ── 4. LiteLLM fallback ──
-        _cfg_logger.debug("Using LiteLLM fallback for provider=%s", self.provider)
+        # ── 3. LiteLLM for all OpenAI-compatible providers ──
+        # The native OpenAI driver (labs/openai/_openai_llm.py) ignores
+        # delta.reasoning_content during streaming, causing visual freezes
+        # when reasoning models (o3, o4) are used. LiteLLM extracts
+        # reasoning_content properly and passes it through.
+        _cfg_logger.debug("Using LiteLLM for provider=%s (reasoning_content support)", self.provider)
         return self._build_litellm()
 
     def _build_openai(self):
@@ -235,13 +248,16 @@ class ModelConfig:
         if self.base_url:
             os.environ["ANTHROPIC_BASE_URL"] = self.base_url
 
+        # Anthropic API hard limit: 8192 output tokens (thinking + text combined).
+        # Cap at 8192 to avoid HTTP 400 errors from the Messages API.
+        capped_tokens = min(self.max_tokens, 8192)
         _cfg_logger.info(
-            "Native Anthropic driver: provider=%s model=%s max_tokens=%d",
-            self.provider, model, self.max_tokens,
+            "Native Anthropic driver: provider=%s model=%s max_tokens=%d (capped from %d)",
+            self.provider, model, capped_tokens, self.max_tokens,
         )
         # AnthropicLlm doesn't accept retry_options directly — retries are
         # handled by the SDK's built-in retry mechanism.
-        return AnthropicLlm(model=model, max_tokens=self.max_tokens)
+        return AnthropicLlm(model=model, max_tokens=capped_tokens)
 
     def _build_gemini(self):
         """Use the native Google GenAI driver — direct Gemini API."""
@@ -258,16 +274,32 @@ class ModelConfig:
         return Gemini(model=model, retry_options=retry_opts)
 
     def _build_litellm(self):
-        """Fallback to LiteLLM for providers without a native driver."""
+        """Build LiteLLM driver for all OpenAI-compatible providers.
+
+        Uses LiteLLM instead of the native OpenAI driver because the latter
+        ignores delta.reasoning_content in streaming, causing visual freezes
+        when reasoning models (o3, o4) are used.  For o3/o4 models, injects
+        reasoning_effort=low to reduce thinking budget.
+        """
         from google.adk.models import LiteLlm
         model = self.model
-        if self.provider not in _LITELLM_NATIVE_PROVIDERS and not model.startswith("openai/"):
+        # Add openai/ prefix only if model has NO provider prefix at all.
+        # Models like "openai/gpt-4o" or "stepfun/step-3.7-flash" already
+        # have the correct LiteLLM format.  Only bare names like
+        # "deepseek-v4-flash-free" need the prefix.
+        if "/" not in model and self.provider not in _LITELLM_NATIVE_PROVIDERS:
             model = f"openai/{model}"
         kwargs = {}
         if self.api_key:
             kwargs["api_key"] = self.api_key
         if self.base_url:
             kwargs["api_base"] = self.base_url
+        # For OpenAI reasoning models (o3, o4), limit reasoning effort to
+        # prevent the model from spending the entire output budget on thinking.
+        model_name = model.split("/")[-1]
+        if _is_reasoning_model(model_name):
+            kwargs["reasoning_effort"] = "low"
+            _cfg_logger.info("LiteLLM: reasoning_effort=low for model=%s", model)
         return LiteLlm(model=model, **kwargs)
 
 

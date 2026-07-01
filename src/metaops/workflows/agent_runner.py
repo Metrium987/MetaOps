@@ -14,18 +14,15 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.artifacts import InMemoryArtifactService
 from google.genai import types
 
-from metaops.core.reasoning_guard import REASONING_BUDGET_EXHAUSTED
+from metaops.core.continuation import (
+    MAX_CONTINUATIONS,
+    CONTINUE_PROMPT,
+    filter_thought_parts,
+    is_truncated,
+    has_budget_exhausted,
+)
 
 logger = logging.getLogger(__name__)
-
-# Mirrors the continuation-retry cap used by reference agent runtimes (e.g.
-# Hermes) for responses truncated mid-answer by the max_tokens budget.
-MAX_CONTINUATIONS = 3
-_CONTINUE_PROMPT = (
-    "Your previous response was cut off by the output token limit. "
-    "Continue exactly where you left off — do not repeat anything already "
-    "written, do not restart the explanation or the code block."
-)
 
 
 async def run_agent_once(agent: Agent, prompt: str) -> str:
@@ -80,21 +77,16 @@ async def run_agent_once(agent: Agent, prompt: str) -> str:
                     "Agent '%s' event reported an error: code=%s message=%s",
                     agent.name, last_error_code, last_error_message,
                 )
-            if event.custom_metadata and event.custom_metadata.get("metaops_truncated"):
+            if is_truncated(event):
                 turn_truncated = True
             if event.content:
-                for part in event.content.parts or []:
-                    # Skip thinking/reasoning parts
-                    if getattr(part, "thought", False):
-                        continue
-                    if part.text:
-                        parts.append(part.text)
+                parts.extend(filter_thought_parts(event.content.parts))
         return turn_truncated
 
     truncated = await _run_turn(prompt)
 
     continuations = 0
-    while truncated and last_error_code != REASONING_BUDGET_EXHAUSTED and continuations < MAX_CONTINUATIONS:
+    while truncated and not has_budget_exhausted(last_error_code) and continuations < MAX_CONTINUATIONS:
         continuations += 1
         logger.info(
             "Agent '%s' output truncated by max_tokens — requesting continuation (%d/%d)",
@@ -102,11 +94,11 @@ async def run_agent_once(agent: Agent, prompt: str) -> str:
         )
         last_error_code = None
         last_error_message = None
-        truncated = await _run_turn(_CONTINUE_PROMPT)
+        truncated = await _run_turn(CONTINUE_PROMPT)
 
     output = "\n".join(parts)
 
-    if last_error_code == REASONING_BUDGET_EXHAUSTED and not output:
+    if has_budget_exhausted(last_error_code) and not output:
         raise RuntimeError(f"Agent '{agent.name}': {last_error_message}")
 
     if not output:
