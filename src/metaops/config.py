@@ -304,6 +304,9 @@ class ModelConfig:
             kwargs["api_key"] = self.api_key
         if self.base_url:
             kwargs["api_base"] = self.base_url
+        # Timeout: free models can be slow or hang. 60s is reasonable for
+        # most responses; prevents indefinite blocking on unresponsive endpoints.
+        kwargs["timeout"] = 60.0
         # For OpenAI reasoning models (o3, o4), limit reasoning effort to
         # prevent the model from spending the entire output budget on thinking.
         model_name = model.split("/")[-1]
