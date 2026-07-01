@@ -302,7 +302,7 @@ class MetaOpsConfig:
         # Database paths — resolve relative to project root, not cwd.
         # This prevents DBs from being created in $HOME when launched from there.
         _project_root = Path(__file__).resolve().parent.parent.parent
-        _data = _project_root / "data"
+        _data = _project_root / ".data"
 
         def _resolve_db_path(env_key: str, default_name: str) -> str:
             raw = os.getenv(env_key, str(_data / default_name))

@@ -53,7 +53,7 @@ memory_service = HybridVectorMemoryService(
     embedding_base_url=config.embedding_base_url,
 )
 _project_root = Path(__file__).resolve().parent.parent.parent
-_artifacts_raw = os.getenv("METAOPS_ARTIFACTS_DIR", str(_project_root / "data" / "artifacts"))
+_artifacts_raw = os.getenv("METAOPS_ARTIFACTS_DIR", str(_project_root / ".data" / "artifacts"))
 _artifacts_path = Path(_artifacts_raw)
 if not _artifacts_path.is_absolute():
     _artifacts_path = _project_root / _artifacts_path

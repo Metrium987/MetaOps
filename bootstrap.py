@@ -36,7 +36,7 @@ def header(msg): print(f"\n{BOLD}{msg}{RESET}")
 # All paths derive from this — no relative paths after this point.
 PROJECT_ROOT = Path.cwd() / REPO_DIR
 VENV_DIR     = PROJECT_ROOT / ".venv"
-DATA_DIR     = PROJECT_ROOT / "data"
+DATA_DIR     = PROJECT_ROOT / ".data"
 ENV_FILE     = PROJECT_ROOT / ".env"
 ENV_EXAMPLE  = PROJECT_ROOT / ".env.example"
 
