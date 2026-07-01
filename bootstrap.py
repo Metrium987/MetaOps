@@ -6,12 +6,12 @@ import sys
 import os
 import shutil
 import subprocess
+import sqlite3
 from pathlib import Path
 
 REPO_URL = "https://github.com/Metrium987/MetaOps.git"
 REPO_DIR = "MetaOps"
 
-# Force UTF-8 on Windows consoles
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -32,11 +32,9 @@ def info(msg):   print(f"  {INFO}  {msg}")
 def header(msg): print(f"\n{BOLD}{msg}{RESET}")
 
 
-# ── Resolve project root ONCE ────────────────────────────────────────────────
-# All paths derive from this — no relative paths after this point.
 PROJECT_ROOT = Path.cwd() / REPO_DIR
-VENV_DIR     = PROJECT_ROOT / ".venv"
 DATA_DIR     = PROJECT_ROOT / ".data"
+VENV_DIR     = PROJECT_ROOT / ".venv"
 ENV_FILE     = PROJECT_ROOT / ".env"
 ENV_EXAMPLE  = PROJECT_ROOT / ".env.example"
 
@@ -56,65 +54,46 @@ print(f"  {REPO_URL}\n")
 header("1 / 5  Python version")
 major, minor = sys.version_info[:2]
 if (major, minor) < (3, 10):
-    fail(f"Python 3.10+ required — found {major}.{minor}. Download: https://python.org")
+    fail(f"Python 3.10+ required — found {major}.{minor}")
 ok(f"Python {major}.{minor}  ({sys.executable})")
 
 
 # ── 2. System dependencies ────────────────────────────────────────────────────
 header("2 / 5  System dependencies")
 
-# git
 git = shutil.which("git")
 if not git:
-    info("git not found — installing automatically...")
+    info("git not found — installing...")
     for pkg_mgr in ["apt-get", "apt", "dnf", "yum", "brew", "pacman", "zypper"]:
         if shutil.which(pkg_mgr):
             cmd = ["brew", "install", "git"] if pkg_mgr == "brew" else ["sudo", pkg_mgr, "install", "-y", "git"]
-            info(f"Using {pkg_mgr}...")
-            r = subprocess.run(cmd)
-            if r.returncode == 0:
-                git = shutil.which("git")
+            subprocess.run(cmd)
+            git = shutil.which("git")
             break
     if not git:
         fail("git not found — install manually: sudo apt-get install -y git")
 ok(f"git: {git}")
 
-# Node.js / npx
 npx = shutil.which("npx")
 if not npx:
     info("npx not found — installing Node.js...")
-    installed_node = False
     if sys.platform == "win32":
-        for mgr, cmd in [
-            ("winget", ["winget", "install", "--id", "OpenJS.NodeJS", "-e", "--silent"]),
-            ("choco",  ["choco", "install", "nodejs", "-y"]),
-        ]:
+        for mgr, cmd in [("winget", ["winget", "install", "--id", "OpenJS.NodeJS", "-e", "--silent"]), ("choco", ["choco", "install", "nodejs", "-y"])]:
             if shutil.which(mgr):
-                info(f"Using {mgr}...")
-                r = subprocess.run(cmd)
-                if r.returncode == 0:
-                    installed_node = True
+                subprocess.run(cmd)
                 break
     else:
         for pkg_mgr in ["apt-get", "apt", "dnf", "yum", "brew", "pacman", "zypper"]:
             if shutil.which(pkg_mgr):
                 cmd = ["brew", "install", "node"] if pkg_mgr == "brew" else ["sudo", pkg_mgr, "install", "-y", "nodejs", "npm"]
-                info(f"Using {pkg_mgr}...")
-                r = subprocess.run(cmd)
-                if r.returncode == 0:
-                    installed_node = True
+                subprocess.run(cmd)
                 break
     npx = shutil.which("npx")
-    if npx:
-        ok(f"npx: {npx}")
-    elif installed_node:
-        warn("Node.js installed but npx not in PATH yet — restart shell after install")
-    else:
-        warn("Could not install Node.js — MCP npm servers will use npx fallback at runtime")
-else:
+if npx:
     ok(f"npx: {npx}")
+else:
+    warn("npx not found — MCP servers will not work")
 
-# uv
 uv = shutil.which("uv")
 if not uv:
     info("uv not found — installing...")
@@ -129,15 +108,10 @@ if not uv:
                 break
         if not uv:
             uv = shutil.which("uv")
-    if not uv:
-        warn("uv installer failed — falling back to pip")
-        subprocess.run([sys.executable, "-m", "pip", "install", "uv", "--quiet"])
-        uv = shutil.which("uv")
-
 if uv and Path(uv).exists():
     ok(f"uv: {uv}")
 else:
-    fail("Could not install uv. Run: curl -LsSf https://astral.sh/uv/install.sh | sh")
+    fail("Could not install uv")
 
 
 # ── 3. Clone or update ────────────────────────────────────────────────────────
@@ -146,7 +120,7 @@ if PROJECT_ROOT.exists():
     info(f"{REPO_DIR} exists — pulling latest...")
     r = subprocess.run(["git", "-C", str(PROJECT_ROOT), "pull", "--ff-only"], capture_output=True, text=True)
     if r.returncode != 0:
-        warn(f"git pull failed — using existing files\n{r.stderr.strip()}")
+        warn(f"git pull failed — using existing\n{r.stderr.strip()}")
     else:
         ok("Repository updated")
 else:
@@ -162,25 +136,25 @@ else:
 header("4 / 5  Installing MetaOps + dependencies")
 
 if not VENV_DIR.exists():
-    info(f"Creating venv at {VENV_DIR} ...")
+    info(f"Creating venv ...")
     subprocess.run([uv, "venv", str(VENV_DIR), "--python", sys.executable], check=True)
     ok("Virtual environment created")
 else:
-    ok(f"Venv exists: {VENV_DIR}")
+    ok(f"Venv exists")
 
-info("Installing MetaOps (uv pip install -e .) ...")
+info("Installing MetaOps ...")
 print()
 r = subprocess.run([uv, "pip", "install", "-e", ".", "--python", str(VENV_PYTHON)], cwd=str(PROJECT_ROOT))
 print()
 if r.returncode != 0:
-    fail("Installation failed — see errors above")
+    fail("Installation failed")
 ok("MetaOps installed")
 
-# MCP servers
+# MCP servers — install locally so npx finds them without downloading each time
 npm = shutil.which("npm")
 if npm:
     info("Installing MCP servers via npm ...")
-    r = subprocess.run([npm, "install", "@modelcontextprotocol/server-filesystem", "@modelcontextprotocol/server-memory", "--quiet"], cwd=str(PROJECT_ROOT))
+    r = subprocess.run([npm, "install", "@modelcontextprotocol/server-filesystem", "@modelcontextprotocol/server-memory", "--save"], cwd=str(PROJECT_ROOT))
     if r.returncode == 0:
         ok("MCP servers installed locally")
     else:
@@ -198,69 +172,32 @@ header("5 / 5  First-run setup")
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "artifacts").mkdir(parents=True, exist_ok=True)
+(DATA_DIR / "metaops_vector_db").mkdir(parents=True, exist_ok=True)
 ok(f"{DATA_DIR} ready")
 
-# Initialize databases so first launch is instant
-import sqlite3
+# Create SQLite databases
 for db_name, schema in [
     ("metaops_sessions.db", None),
-    ("metaops_skills.db", """
-        CREATE TABLE IF NOT EXISTS skills (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE,
-            trigger_pattern TEXT,
-            procedure TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """),
+    ("metaops_skills.db", "CREATE TABLE IF NOT EXISTS skills (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, trigger_pattern TEXT, procedure TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)"),
 ]:
     db_path = DATA_DIR / db_name
-    try:
-        conn = sqlite3.connect(str(db_path))
-        if schema:
-            conn.executescript(schema)
-        conn.close()
-        ok(f"{db_name} created")
-    except Exception as e:
-        warn(f"Failed to create {db_name}: {e}")
-
-# Verify all DBs exist
-for f in ["metaops_sessions.db", "metaops_skills.db"]:
-    if (DATA_DIR / f).exists():
-        ok(f"{f} verified")
+    if not db_path.exists():
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.executescript(schema) if schema else None
+            conn.close()
+            ok(f"{db_name} created")
+        except Exception as e:
+            warn(f"Failed to create {db_name}: {e}")
     else:
-        warn(f"{f} MISSING — will be created at first launch")
+        ok(f"{db_name} exists")
 
-# Verify all DBs exist
-for f in ["metaops_sessions.db", "metaops_skills.db"]:
-    if (DATA_DIR / f).exists():
-        ok(f"{f} verified")
-    else:
-        warn(f"{f} MISSING — will be created at first launch")
-
-# Initialize ChromaDB collections
-chroma_dir = DATA_DIR / "metaops_vector_db"
-chroma_dir.mkdir(parents=True, exist_ok=True)
-try:
-    import chromadb
-    client = chromadb.PersistentClient(path=str(chroma_dir))
-    for name in ["episodic_memory", "semantic_memory", "procedural_memory", "persona_memory"]:
-        client.get_or_create_collection(name)
-    ok("ChromaDB vector collections created")
-except ImportError:
-    # chromadb not in system Python — will init at first launch via venv
-    ok(f"{chroma_dir} created (collections init at first launch)")
-except Exception as e:
-    warn(f"ChromaDB init failed: {e}")
-
-# .env — always inside PROJECT_ROOT
+# .env
 if ENV_FILE.exists():
-    ok(".env already exists")
+    ok(".env exists")
 elif ENV_EXAMPLE.exists():
     shutil.copy(ENV_EXAMPLE, ENV_FILE)
     warn(".env created from .env.example — add your API keys")
-else:
-    warn("No .env.example found — create .env manually")
 
 # Shell
 shell = shutil.which("bash") or shutil.which("powershell") or shutil.which("cmd")
@@ -292,7 +229,6 @@ else:
     ok("MetaOps imports correctly")
 
 
-# ── Done ──────────────────────────────────────────────────────────────────────
 metaops_cmd = "metaops" if launcher_installed else str(VENV_BIN / "metaops")
 
 print(f"""
@@ -308,6 +244,3 @@ print(f"""
   2. Edit .env — add your API keys
   3. {metaops_cmd}
 """)
-
-if not launcher_installed and sys.platform != "win32":
-    print(f"  Tip: export PATH=\"{VENV_BIN}:$PATH\" >> ~/.bashrc && source ~/.bashrc\n")
