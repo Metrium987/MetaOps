@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -129,15 +130,27 @@ def _is_reasoning_model(model_name: str) -> bool:
 
 
 class ModelConfig:
-    def __init__(self, model_env: str, provider_env: str, default_model: str, default_provider: str = "openrouter"):
+    def __init__(self, model_env: str, provider_env: str, default_model: str, default_provider: str = "openrouter", role_name: Optional[str] = None):
         self.provider = os.getenv(provider_env, default_provider).lower()
         self.api_key, self.base_url = resolve_provider(self.provider)
         explicit_model = os.getenv(model_env)
         if explicit_model:
             self.model = explicit_model
         else:
-            # Use provider-specific default if the caller's default_model was built for a different provider
-            self.model = _PROVIDER_DEFAULT_MODELS.get(self.provider, default_model)
+            # Try to get the provider default model from environment variables first
+            provider_upper = self.provider.upper()
+            env_default = os.getenv(f"{provider_upper}_DEFAULT_MODEL") or os.getenv(f"{provider_upper}_DEFAULT_MODELS")
+            if env_default:
+                self.model = env_default
+            else:
+                # Use provider-specific default if the caller's default_model was built for a different provider
+                self.model = _PROVIDER_DEFAULT_MODELS.get(self.provider, default_model)
+
+        if role_name:
+            self.role_name = role_name.lower()
+        else:
+            match = re.match(r"^METAOPS_(.+)_MODEL$", model_env)
+            self.role_name = match.group(1).lower() if match else "unknown"
 
         # ADK's OpenAILlm defaults max_tokens to 4096 — too small for a tool
         # call whose argument is a full file (e.g. a single-file HTML/CSS/JS
@@ -302,7 +315,26 @@ class ModelConfig:
         kwargs = {}
         if self.api_key:
             kwargs["api_key"] = self.api_key
-        if self.base_url:
+            
+        portkey_url = os.getenv("PORTKEY_GATEWAY_URL")
+        if portkey_url:
+            _cfg_logger.info("Routing provider=%s through Portkey AI Gateway at %s", self.provider, portkey_url)
+            extra_headers = kwargs.get("extra_headers") or {}
+            if self.provider in _OPENAI_COMPATIBLE_PROVIDERS:
+                extra_headers["x-portkey-provider"] = "openai"
+            else:
+                extra_headers["x-portkey-provider"] = self.provider
+            
+            if self.base_url:
+                extra_headers["x-portkey-custom-host"] = self.base_url
+                
+            # Tag the request with the agent's role for Portkey observability
+            metadata = {"role": self.role_name}
+            extra_headers["x-portkey-metadata"] = json.dumps(metadata)
+                
+            kwargs["extra_headers"] = extra_headers
+            kwargs["api_base"] = portkey_url
+        elif self.base_url:
             kwargs["api_base"] = self.base_url
         # Timeout: free models can be slow or hang. 60s is reasonable for
         # most responses; prevents indefinite blocking on unresponsive endpoints.
@@ -332,6 +364,19 @@ class MetaOpsConfig:
         self.default_cli_role: str = os.getenv("METAOPS_DEFAULT_CLI_ROLE", "admin")
         self.default_cron_role: str = os.getenv("METAOPS_DEFAULT_CRON_ROLE", "user")
         self.default_telegram_role: str = os.getenv("METAOPS_DEFAULT_TELEGRAM_ROLE", "admin")
+
+        # Telegram detailed configs
+        self.telegram_mode: str = os.getenv("TELEGRAM_MODE", "polling").lower()
+        self.telegram_reply_to_message: bool = os.getenv("TELEGRAM_REPLY_TO_MESSAGE", "false").lower() == "true"
+        self.telegram_react_emoji: Optional[str] = os.getenv("TELEGRAM_REACT_EMOJI") or None
+        self.telegram_group_policy: str = os.getenv("TELEGRAM_GROUP_POLICY", "mention").lower()
+
+        self.telegram_webhook_url: str = os.getenv("TELEGRAM_WEBHOOK_URL", "")
+        self.telegram_webhook_listen_host: str = os.getenv("TELEGRAM_WEBHOOK_LISTEN_HOST", "127.0.0.1")
+        self.telegram_webhook_listen_port: int = int(os.getenv("TELEGRAM_WEBHOOK_LISTEN_PORT", "8081"))
+        self.telegram_webhook_path: str = os.getenv("TELEGRAM_WEBHOOK_PATH", "/telegram")
+        self.telegram_webhook_secret_token: str = os.getenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "")
+        self.telegram_webhook_max_connections: int = int(os.getenv("TELEGRAM_WEBHOOK_MAX_CONNECTIONS", "4"))
 
         # Per-agent model configs
         self.coordinator  = ModelConfig("METAOPS_COORDINATOR_MODEL",  "METAOPS_COORDINATOR_PROVIDER",  "openai/gpt-4o")

@@ -1,8 +1,11 @@
 import asyncio
 import logging
+import re
 from typing import Optional
+
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+
 from google.adk.runners import Runner
 from google.adk.events import Event
 from google.adk.agents.run_config import RunConfig
@@ -51,6 +54,8 @@ class TelegramBridge(BaseGateway):
         self._pending: dict[str, asyncio.Queue] = {}
         self.application = Application.builder().token(token).build()
         self._config = get_config()
+        self.bot_id = None
+        self.bot_username = None
         # Active session tracking (hermes pattern)
         self._active_sessions: dict[str, asyncio.Event] = {}
         self._session_tasks: dict[str, asyncio.Task] = {}
@@ -59,16 +64,46 @@ class TelegramBridge(BaseGateway):
     async def start(self):
         self.application.add_handler(CommandHandler("start", self.cmd_start))
         self.application.add_handler(CommandHandler("clear", self.cmd_clear))
+        
+        # MessageHandler matches TEXT (both normal message and channel post)
         self.application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
         )
+        # Also register a handler to catch commands sent in channel posts
+        self.application.add_handler(
+            MessageHandler(filters.COMMAND & filters.ChatType.CHANNEL, self.handle_channel_command)
+        )
+
         await self.application.initialize()
         await self.application.start()
-        await self.application.updater.start_polling(
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,
-        )
-        logger.info("Telegram gateway polling.")
+        
+        # Fetch bot user info to resolve bot username and ID for mentions
+        bot_info = await self.application.bot.get_me()
+        self.bot_id = bot_info.id
+        self.bot_username = bot_info.username
+        logger.info("Telegram bot @%s connected (ID: %s)", self.bot_username, self.bot_id)
+
+        if self._config.telegram_mode == "webhook":
+            await self.application.updater.start_webhook(
+                listen=self._config.telegram_webhook_listen_host,
+                port=self._config.telegram_webhook_listen_port,
+                url_path=self._config.telegram_webhook_path.lstrip("/"),
+                webhook_url=self._config.telegram_webhook_url,
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+                secret_token=self._config.telegram_webhook_secret_token or None,
+                max_connections=self._config.telegram_webhook_max_connections,
+            )
+            logger.info("Telegram gateway webhook running on %s:%s%s", 
+                        self._config.telegram_webhook_listen_host,
+                        self._config.telegram_webhook_listen_port,
+                        self._config.telegram_webhook_path)
+        else:
+            await self.application.updater.start_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+            )
+            logger.info("Telegram gateway polling.")
 
     async def stop(self):
         await self._cancel_background_tasks()
@@ -92,10 +127,46 @@ class TelegramBridge(BaseGateway):
         self._session_tasks.clear()
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("MetaOps ready. Send a message to begin.")
+        message = update.effective_message
+        if not message:
+            return
+        chat = update.effective_chat
+        reply_id = message.message_id if self._config.telegram_reply_to_message else None
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text="MetaOps ready. Send a message to begin.",
+            reply_to_message_id=reply_id
+        )
 
     async def cmd_clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = str(update.effective_user.id)
+        message = update.effective_message
+        if not message:
+            return
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if user:
+            user_id = str(user.id)
+            user_name = user.first_name or user_id
+        else:
+            user_id = f"channel_{chat.id}"
+            user_name = chat.title or user_id
+
+        # Authorization check
+        is_allowed = False
+        if self.allowed_user_ids is None:
+            is_allowed = True
+        else:
+            if user_id in self.allowed_user_ids or str(chat.id) in self.allowed_user_ids:
+                is_allowed = True
+            elif user and str(user.id) in self.allowed_user_ids:
+                is_allowed = True
+
+        if not is_allowed:
+            if chat.type not in ("group", "supergroup", "channel"):
+                await context.bot.send_message(chat_id=chat.id, text="Access denied.")
+            return
+
         session_id = self.session_manager.get_session_id("telegram", user_id)
         self._initialized_sessions.discard(session_id)
         self.session_manager.clear_session("telegram", user_id)
@@ -111,7 +182,26 @@ class TelegramBridge(BaseGateway):
                 )
             except Exception as e:
                 logger.error("Failed to delete session %s from database: %s", session_id, e)
-        await update.message.reply_text("Session cleared. Send a message to start a new one.")
+        
+        reply_id = message.message_id if self._config.telegram_reply_to_message else None
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text="Session cleared. Send a message to start a new one.",
+            reply_to_message_id=reply_id
+        )
+
+    async def handle_channel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        message = update.effective_message
+        if not message or not message.text:
+            return
+        cmd = message.text.split()[0].lower()
+        if "@" in cmd:
+            cmd = cmd.split("@")[0]
+        
+        if cmd == "/start":
+            await self.cmd_start(update, context)
+        elif cmd == "/clear":
+            await self.cmd_clear(update, context)
 
     async def _ensure_session(self, user_id: str, session_id: str, user_name: str):
         if self._session_service and session_id not in self._initialized_sessions:
@@ -146,46 +236,111 @@ class TelegramBridge(BaseGateway):
             self.session_manager.set_busy(session_id, False)
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user = update.effective_user
-        user_id = str(user.id)
-        chat_id = update.effective_chat.id
-        user_input = update.message.text
-
-        if self.allowed_user_ids is not None and user_id not in self.allowed_user_ids:
-            logger.warning("Rejected message from non-allowlisted Telegram user_id=%s", user_id)
-            await context.bot.send_message(chat_id=chat_id, text="Access denied.")
+        message = update.effective_message
+        if not message or not message.text:
             return
+
+        chat = update.effective_chat
+        chat_id = chat.id
+        user = update.effective_user
+
+        # Identify user/session
+        if user:
+            user_id = str(user.id)
+            user_name = user.first_name or user_id
+        else:
+            user_id = f"channel_{chat_id}"
+            user_name = chat.title or user_id
+
+        # Check authorization
+        is_allowed = False
+        if self.allowed_user_ids is None:
+            is_allowed = True
+        else:
+            if user_id in self.allowed_user_ids or str(chat_id) in self.allowed_user_ids:
+                is_allowed = True
+            elif user and str(user.id) in self.allowed_user_ids:
+                is_allowed = True
+
+        if not is_allowed:
+            if chat.type in ("group", "supergroup", "channel"):
+                logger.warning("Ignored unauthorized message in %s chat_id=%s", chat.type, chat_id)
+            else:
+                logger.warning("Rejected message from non-allowlisted Telegram user_id=%s", user_id)
+                await context.bot.send_message(chat_id=chat_id, text="Access denied.")
+            return
+
+        # Check group policy (if in group/supergroup/channel)
+        if chat.type in ("group", "supergroup", "channel"):
+            policy = self._config.telegram_group_policy
+            if policy == "mention":
+                is_mentioned = False
+                bot_username = self.bot_username
+                if bot_username:
+                    if f"@{bot_username.lower()}" in message.text.lower():
+                        is_mentioned = True
+                
+                # Check if it's a reply to our own message
+                if not is_mentioned and message.reply_to_message:
+                    reply_to = message.reply_to_message
+                    if reply_to.from_user and reply_to.from_user.id == self.bot_id:
+                        is_mentioned = True
+                
+                if not is_mentioned:
+                    return
 
         session_id = self.session_manager.get_session_id("telegram", user_id)
 
         # Self-heal stale locks before checking
         self._heal_stale_lock(session_id)
 
+        user_input = message.text
+        bot_username = self.bot_username
+        if bot_username and chat.type in ("group", "supergroup", "channel"):
+            mention_str = f"@{bot_username}"
+            pattern = re.compile(re.escape(mention_str), re.IGNORECASE)
+            user_input = pattern.sub("", user_input).strip()
+
         if session_id in self._active_sessions:
             queue = self._get_pending_queue(session_id)
             try:
-                queue.put_nowait((user_input, chat_id))
+                queue.put_nowait((user_input, chat_id, message.message_id))
                 count = queue.qsize()
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"Queued ({count}/{self._config.max_pending_messages}). Processing after current turn."
+                    text=f"Queued ({count}/{self._config.max_pending_messages}). Processing after current turn.",
+                    reply_to_message_id=message.message_id if self._config.telegram_reply_to_message else None
                 )
             except asyncio.QueueFull:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text="Message queue full. Please wait."
+                    text="Message queue full. Please wait.",
+                    reply_to_message_id=message.message_id if self._config.telegram_reply_to_message else None
                 )
             return
 
-        await self._ensure_session(user_id, session_id, user.first_name or user_id)
+        await self._ensure_session(user_id, session_id, user_name)
 
-        # Mark active BEFORE spawning task (hermes pattern — closes race window)
+        # Mark active BEFORE spawning task (closes race window)
         interrupt_event = asyncio.Event()
         self._active_sessions[session_id] = interrupt_event
         self.session_manager.set_busy(session_id, True)
 
+        # React with emoji if configured
+        react_emoji = self._config.telegram_react_emoji
+        if react_emoji:
+            try:
+                from telegram import ReactionTypeEmoji
+                await context.bot.set_message_reaction(
+                    chat_id=chat_id,
+                    message_id=message.message_id,
+                    reaction=[ReactionTypeEmoji(emoji=react_emoji)],
+                )
+            except Exception as e:
+                logger.debug("Failed to set reaction: %s", e)
+
         task = asyncio.create_task(
-            self._process_message(user_id, session_id, chat_id, user_input, interrupt_event)
+            self._process_message(user_id, session_id, chat_id, user_input, interrupt_event, message.message_id)
         )
         self._session_tasks[session_id] = task
         self._background_tasks.add(task)
@@ -208,7 +363,7 @@ class TelegramBridge(BaseGateway):
             pass
 
     async def _process_message(self, user_id: str, session_id: str, chat_id: int,
-                                user_input: str, interrupt_event: asyncio.Event):
+                                user_input: str, interrupt_event: asyncio.Event, reply_to_message_id: Optional[int] = None):
         """Background task: run agent, stream typing, send response."""
         typing_task = asyncio.create_task(self._keep_typing(chat_id, interrupt_event))
         checkpoint = SessionCheckpoint(f"telegram:{user_id}")
@@ -220,23 +375,35 @@ class TelegramBridge(BaseGateway):
                 message_text=user_input,
                 run_config=_make_run_config(),
             )
-            # Suppress stale response if session was interrupted
             if text and interrupt_event.is_set() and session_id in self._pending:
                 logger.info("Suppressing stale response for interrupted session %s", session_id)
                 text = None
 
             checkpoint.save({"last_user_input": user_input, "last_response": (text or "")[:2000]})
             if text:
+                reply_id = reply_to_message_id if self._config.telegram_reply_to_message else None
                 for i in range(0, len(text), 4000):
-                    await self.application.bot.send_message(chat_id=chat_id, text=text[i : i + 4000])
+                    await self.application.bot.send_message(
+                        chat_id=chat_id, 
+                        text=text[i : i + 4000],
+                        reply_to_message_id=reply_id
+                    )
             elif has_budget_exhausted(error_code):
-                await self.application.bot.send_message(chat_id=chat_id, text="Response was consumed by internal reasoning. Please retry.")
+                await self.application.bot.send_message(
+                    chat_id=chat_id, 
+                    text="Response was consumed by internal reasoning. Please retry.",
+                    reply_to_message_id=reply_to_message_id if self._config.telegram_reply_to_message else None
+                )
         except asyncio.CancelledError:
             logger.debug("Task cancelled for session %s", session_id)
         except Exception as exc:
             logger.error("Error for user %s: %s", user_id, exc)
             try:
-                await self.application.bot.send_message(chat_id=chat_id, text=f"System Error: {exc}")
+                await self.application.bot.send_message(
+                    chat_id=chat_id, 
+                    text=f"System Error: {exc}",
+                    reply_to_message_id=reply_to_message_id if self._config.telegram_reply_to_message else None
+                )
             except Exception:
                 pass
         finally:
@@ -257,9 +424,8 @@ class TelegramBridge(BaseGateway):
             return
         while not queue.empty():
             try:
-                msg_text, chat_id = queue.get_nowait()
+                msg_text, chat_id, msg_id = queue.get_nowait()
                 logger.info("Draining queued message for session %s", session_id)
-                # Re-mark active for the drain turn
                 interrupt_event = asyncio.Event()
                 self._active_sessions[session_id] = interrupt_event
                 self.session_manager.set_busy(session_id, True)
@@ -273,10 +439,19 @@ class TelegramBridge(BaseGateway):
                         run_config=_make_run_config(),
                     )
                     if text:
+                        reply_id = msg_id if self._config.telegram_reply_to_message else None
                         for i in range(0, len(text), 4000):
-                            await self.application.bot.send_message(chat_id=chat_id, text=text[i : i + 4000])
+                            await self.application.bot.send_message(
+                                chat_id=chat_id, 
+                                text=text[i : i + 4000],
+                                reply_to_message_id=reply_id
+                            )
                     elif has_budget_exhausted(error_code):
-                        await self.application.bot.send_message(chat_id=chat_id, text="Response was consumed by internal reasoning. Please retry.")
+                        await self.application.bot.send_message(
+                            chat_id=chat_id, 
+                            text="Response was consumed by internal reasoning. Please retry.",
+                            reply_to_message_id=msg_id if self._config.telegram_reply_to_message else None
+                        )
                 finally:
                     typing_task.cancel()
                     try:

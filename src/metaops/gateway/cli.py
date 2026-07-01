@@ -85,6 +85,8 @@ class CLIBridge(BaseGateway):
 
     async def _run_spinner(self, message: str):
         """Run an animated spinner until cancelled."""
+        if not sys.stdout.isatty():
+            return
         idx = 0
         try:
             while True:

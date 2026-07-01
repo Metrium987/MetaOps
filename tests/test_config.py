@@ -109,3 +109,52 @@ class TestModelConfig:
             "openai",
         )
         assert config.max_tokens == 32000
+
+    def test_role_name_detection(self, monkeypatch):
+        config = ModelConfig(
+            "METAOPS_COORDINATOR_MODEL",
+            "METAOPS_COORDINATOR_PROVIDER",
+            "gpt-4o",
+            "openai",
+        )
+        assert config.role_name == "coordinator"
+
+        config_unknown = ModelConfig(
+            "SOME_OTHER_ENV_VAR",
+            "METAOPS_COORDINATOR_PROVIDER",
+            "gpt-4o",
+            "openai",
+        )
+        assert config_unknown.role_name == "unknown"
+
+        config_explicit = ModelConfig(
+            "METAOPS_COORDINATOR_MODEL",
+            "METAOPS_COORDINATOR_PROVIDER",
+            "gpt-4o",
+            "openai",
+            role_name="custom-agent",
+        )
+        assert config_explicit.role_name == "custom-agent"
+
+    def test_provider_default_model_override(self, monkeypatch):
+        monkeypatch.delenv("METAOPS_COORDINATOR_MODEL", raising=False)
+        monkeypatch.setenv("METAOPS_COORDINATOR_PROVIDER", "openrouter")
+        monkeypatch.setenv("OPENROUTER_DEFAULT_MODELS", "meta-llama/llama-3-70b-instruct")
+
+        config = ModelConfig(
+            "METAOPS_COORDINATOR_MODEL",
+            "METAOPS_COORDINATOR_PROVIDER",
+            "gpt-4o",
+            "openrouter",
+        )
+        assert config.model == "meta-llama/llama-3-70b-instruct"
+
+        monkeypatch.delenv("OPENROUTER_DEFAULT_MODELS", raising=False)
+        monkeypatch.setenv("OPENROUTER_DEFAULT_MODEL", "meta-llama/llama-3-8b-instruct")
+        config_singular = ModelConfig(
+            "METAOPS_COORDINATOR_MODEL",
+            "METAOPS_COORDINATOR_PROVIDER",
+            "gpt-4o",
+            "openrouter",
+        )
+        assert config_singular.model == "meta-llama/llama-3-8b-instruct"
