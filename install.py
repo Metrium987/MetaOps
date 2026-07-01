@@ -125,14 +125,18 @@ for db_name, schema in [
         ok(f"{db_name} created")
 
 # Initialize ChromaDB collections
+chroma_dir = DATA_DIR / "metaops_vector_db"
+chroma_dir.mkdir(parents=True, exist_ok=True)
 try:
     import chromadb
-    client = chromadb.PersistentClient(path=str(DATA_DIR / "metaops_vector_db"))
+    client = chromadb.PersistentClient(path=str(chroma_dir))
     for name in ["episodic_memory", "semantic_memory", "procedural_memory", "persona_memory"]:
         client.get_or_create_collection(name)
     ok("ChromaDB vector collections created")
+except ImportError:
+    ok(f"{chroma_dir} created (collections init at first launch)")
 except Exception as e:
-    warn(f"ChromaDB init failed (will retry at launch): {e}")
+    warn(f"ChromaDB init failed: {e}")
 
 
 # ── 7. .env setup ─────────────────────────────────────────────────────────────
