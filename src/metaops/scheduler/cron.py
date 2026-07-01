@@ -1,11 +1,16 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from google.adk.runners import Runner
+from google.adk.agents.run_config import RunConfig
 from google.genai import types
 from typing import Callable, Awaitable
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Safety limit: prevent runaway cron jobs from consuming unlimited LLM calls
+_CRON_RUN_CONFIG = RunConfig(max_llm_calls=30)
+
 
 class MetaOpsCronScheduler:
     def __init__(self, runner: Runner, delivery_callback: Callable[[str, str], Awaitable[None]]):
@@ -21,7 +26,7 @@ class MetaOpsCronScheduler:
         content = types.Content(role='user', parts=[types.Part(text=prompt)])
         try:
             final_output = []
-            async for event in self.runner.run_async(user_id="system_cron", session_id=session_id, new_message=content):
+            async for event in self.runner.run_async(user_id="system_cron", session_id=session_id, new_message=content, run_config=_CRON_RUN_CONFIG):
                 if event.is_final_response() and event.content and event.content.parts:
                     text = "".join([
                         part.text for part in event.content.parts

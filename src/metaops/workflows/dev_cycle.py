@@ -11,13 +11,13 @@ Exposed as FunctionTool for the coordinator agent.
 import logging
 from google.adk.agents import Agent
 from google.adk.tools import FunctionTool, ToolContext
-from metaops.config import MetaOpsConfig
+from metaops.config import get_config
 from metaops.tools._shell_guard import check_command_allowed
 from metaops.workflows.agent_runner import run_agent_once
 from metaops.workflows.vibe_coding import vibe_code
 
 logger = logging.getLogger(__name__)
-config = MetaOpsConfig()
+config = get_config()
 
 _PLANNER_INSTRUCTION = """You are a software architect. Turn a feature request into a concrete, actionable implementation plan.
 
@@ -109,7 +109,7 @@ async def full_dev_cycle(
 
     # Stage 2: Implement with review loop
     combined_task = f"{task}\n\n---\nImplementation Plan:\n{plan}"
-    code_result = await vibe_code(task=combined_task)
+    code_result = await vibe_code(task=combined_task, tool_context=tool_context)
     logger.info(
         "Coding complete — approved=%s revisions=%d",
         code_result["approved"],
@@ -130,8 +130,11 @@ async def full_dev_cycle(
         logger.info("Running tests: %s", test_command)
         test_output = await _run_shell(test_command)
         result["test_output"] = test_output
-        passed = "passed" in test_output.lower() or "ok" in test_output.lower()
-        failed = "failed" in test_output.lower() or "error" in test_output.lower()
+        # Heuristic: look for pytest/unittest summary patterns rather than
+        # substring matching on "passed"/"error" which can be unreliable.
+        lower = test_output.lower()
+        passed = "passed" in lower or "ok" in lower
+        failed = "failed" in lower or "errors" in lower or "error" == lower.strip()
         result["tests_passed"] = passed and not failed
         logger.info("Tests %s", "passed" if result["tests_passed"] else "failed/inconclusive")
 

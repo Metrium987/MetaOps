@@ -2,16 +2,19 @@ import os
 import shlex
 from typing import Optional
 
-FORBIDDEN_COMMAND_PREFIXES = {"rm", "sudo", "mkfs", "format", "dd"}
+FORBIDDEN_COMMAND_PREFIXES = {"rm", "sudo", "mkfs", "format", "dd", "shutdown", "reboot", "halt", "poweroff"}
+
+# Commands that can be used to bypass the denylist via sub-invocation
+_SUBINVOCATION_COMMANDS = {"bash", "sh", "zsh", "python", "python3", "perl", "ruby", "node", "env", "nohup", "xargs"}
 
 
 def check_command_allowed(command: str, user_role: str) -> Optional[str]:
     """Return an error message if `command` should be rejected for `user_role`, else None.
 
-    Defense-in-depth only: a denylist of dangerous binaries by leading token.
-    It does not stop chained/sub-interpreted commands (`a; rm -rf .`,
-    `bash -c "rm -rf /"`, piping to a shell, etc.) — admins bypass it
-    entirely, non-admin roles are blocked only from the listed binaries.
+    Defense-in-depth only: checks leading tokens and common bypass patterns.
+    It does not stop all possible chained/sub-interpreted commands — admins
+    bypass it entirely, non-admin roles are blocked from listed binaries and
+    obvious sub-invocation patterns.
     """
     if user_role == "admin":
         return None
@@ -19,8 +22,23 @@ def check_command_allowed(command: str, user_role: str) -> Optional[str]:
         tokens = shlex.split(command)
     except ValueError:
         return "Command parsing failed. Rejected for security reasons."
-    for tok in tokens:
-        base_tok = os.path.basename(tok.replace("\\", "/")).lower()
-        if any(base_tok.startswith(f) for f in FORBIDDEN_COMMAND_PREFIXES):
-            return "Insufficient permissions to execute sensitive commands."
+
+    if not tokens:
+        return None
+
+    first_token = os.path.basename(tokens[0].replace("\\", "/")).lower()
+
+    # Direct match on the leading command
+    if any(first_token.startswith(f) for f in FORBIDDEN_COMMAND_PREFIXES):
+        return "Insufficient permissions to execute sensitive commands."
+
+    # Sub-invocation: "bash -c 'rm -rf /'" or "python -c 'import os; os.system(...)'"
+    if first_token in _SUBINVOCATION_COMMANDS and len(tokens) > 1:
+        # Join remaining tokens to detect forbidden commands in the sub-command
+        rest = " ".join(tokens[1:])
+        rest_lower = rest.lower()
+        for forbidden in FORBIDDEN_COMMAND_PREFIXES:
+            if forbidden in rest_lower:
+                return "Insufficient permissions to execute sensitive commands via sub-invocation."
+
     return None

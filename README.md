@@ -302,6 +302,7 @@ METAOPS_CRON_DELIVERY_TARGET=cli
 | `full_dev_cycle` | Architect plan → vibe_code → optional test run |
 | `deep_research` | Parallel Tavily search + extraction → structured report |
 | `thinker` | Deep reasoning for hard decisions and tradeoffs |
+| `fact_check` | Claim extraction + web verification → corrected answer |
 | `run_audit` | bandit + pip-audit + code pattern scan + dependency review |
 | `workstream_executor` | Isolated bash pipeline (long-running commands) |
 | `execute_secure_command` | Role-gated shell execution |

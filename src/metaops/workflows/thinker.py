@@ -1,8 +1,8 @@
 from google.adk.agents import Agent
 from google.adk.tools import AgentTool
-from metaops.config import MetaOpsConfig
+from metaops.config import get_config
 
-config = MetaOpsConfig()
+config = get_config()
 
 _THINKER_INSTRUCTION = """You are a deep reasoning specialist. Your job: think carefully and reach a rigorous, well-justified conclusion.
 

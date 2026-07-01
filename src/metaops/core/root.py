@@ -38,10 +38,18 @@ from metaops.core.callbacks import (
     init_callbacks,
 )
 from metaops.tools.skill_executor import skill_executor_tool
-from metaops.tools.memory_tools import skill_saver_tool, memory_search_tool, init_memory_tools
-from metaops.config import MetaOpsConfig
+from metaops.tools.memory_tools import (
+    skill_saver_tool,
+    skill_approve_tool,
+    skill_reject_tool,
+    skill_discover_tool,
+    memory_search_tool,
+    init_memory_tools,
+)
+from metaops.config import get_config
+from metaops.workflows.fact_checker import fact_check_tool
 
-config = MetaOpsConfig()
+config = get_config()
 
 Path(config.sessions_db).parent.mkdir(parents=True, exist_ok=True)
 session_service = SqliteSessionService(db_path=config.sessions_db)
@@ -151,20 +159,32 @@ Destructive / irreversible    → request_input FIRST, always — message=clear 
         tool_guide += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nLEARNED SKILLS AVAILABLE\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n{skills}\n"
     return tool_guide
 
+def _should_use_builtin_planner(config) -> bool:
+    """Detect if the coordinator model supports BuiltInPlanner (Gemini or Anthropic).
+
+    Checks both the provider name and the model name itself, so models routed
+    through aggregators (e.g. OpenRouter -> gemini/gemini-2.5-pro) are detected.
+    """
+    provider = config.coordinator.provider
+    if provider in ("gemini", "anthropic"):
+        return True
+    model_lower = config.coordinator.model.lower()
+    return "gemini" in model_lower or "claude" in model_lower
+
+
 def create_runner() -> Runner:
     config.validate_keys()
     mcp_toolsets = load_mcp_toolsets()
     # BuiltInPlanner: enables native thinking/reasoning for Gemini and Anthropic.
-    # For other providers (OpenRouter, OpenAI, etc.) this is skipped — the model
-    # handles reasoning internally without ADK control.
+    # Detects both direct providers and routed models (e.g. OpenRouter -> Gemini).
     planner = None
-    if config.coordinator.provider in ("gemini", "anthropic"):
+    if _should_use_builtin_planner(config):
         from google.adk.planners import BuiltInPlanner
         from google.genai import types
         planner = BuiltInPlanner(
             thinking_config=types.ThinkingConfig(
                 include_thoughts=True,
-                thinking_budget=2048,  # Leave ~6000 tokens for artifact (Anthropic API limit = 8192)
+                thinking_budget=2048,
             )
         )
 
@@ -193,9 +213,10 @@ def create_runner() -> Runner:
             web_crawl_tool,
             web_map_tool,
             company_info_tool,
-            # Reasoning & audit
+            # Reasoning, audit & fact-checking
             thinker_tool,
             audit_tool,
+            fact_check_tool,
             # Memory, artifacts & skills
             preload_memory,
             load_artifacts,
@@ -204,6 +225,9 @@ def create_runner() -> Runner:
             ingest_file_tool,
             skill_executor_tool,
             skill_saver_tool,
+            skill_approve_tool,
+            skill_reject_tool,
+            skill_discover_tool,
             # MCP servers
             *mcp_toolsets,
         ],

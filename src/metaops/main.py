@@ -106,11 +106,11 @@ async def main(args: argparse.Namespace):
     from metaops.gateway.cli import CLIBridge
     from metaops.gateway.telegram import TelegramBridge
     from metaops.scheduler.cron import MetaOpsCronScheduler
-    from metaops.config import MetaOpsConfig
+    from metaops.config import get_config
     from metaops.gateway.registry import GatewayRegistry
     from metaops.gateway.delivery import DeliveryService
 
-    config = MetaOpsConfig()
+    config = get_config()
 
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(
@@ -156,7 +156,7 @@ async def main(args: argparse.Namespace):
         cron_scheduler.add_job(
             job_id="nightly_audit",
             cron_expression="0 2 * * *",
-            prompt="Run a disk usage audit.",
+            prompt="Run a full security and code quality audit of this project.",
             session_id="cron_nightly_audit",
         )
         cron_scheduler.start()
@@ -218,12 +218,12 @@ async def _close_mcp_toolsets(runner) -> None:
 
 def _db_reset(args: argparse.Namespace):
     """Reset database(s). Synchronous — runs outside asyncio."""
-    from metaops.config import MetaOpsConfig
+    from metaops.config import get_config
     import os
     import shutil
     from pathlib import Path
 
-    config = MetaOpsConfig()
+    config = get_config()
     target = args.target or "sessions"
 
     # Resolve artifacts path relative to project root
@@ -288,7 +288,7 @@ def run():
     try:
         asyncio.run(main(args))
     except (KeyboardInterrupt, asyncio.CancelledError):
-        print("\n[MetaOps] Service arrêté proprement.")
+        print("\n[MetaOps] Service stopped.")
 
 
 if __name__ == "__main__":

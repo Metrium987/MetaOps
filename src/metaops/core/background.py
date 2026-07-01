@@ -7,10 +7,10 @@ from datetime import datetime, timezone
 from google.adk.agents import Agent
 from google.adk.tools import FunctionTool
 from metaops.workflows.agent_runner import run_agent_once
-from metaops.config import MetaOpsConfig
+from metaops.config import get_config
 
 logger = logging.getLogger(__name__)
-config = MetaOpsConfig()
+config = get_config()
 
 # ---------------------------------------------------------------------------
 # Audit tools — each one is a bounded, deterministic operation

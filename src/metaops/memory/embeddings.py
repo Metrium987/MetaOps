@@ -1,4 +1,5 @@
 import os
+import threading
 from typing import Optional
 from chromadb import EmbeddingFunction, Documents, Embeddings
 
@@ -22,7 +23,8 @@ class MetaOpsEmbeddingFunction(EmbeddingFunction):
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         self.base_url = base_url
         self._local_model = None
-        self._cache = {}
+        self._cache: dict[tuple, list] = {}
+        self._cache_lock = threading.Lock()
 
     def _load_local_model(self):
         if self._local_model is None:
@@ -34,17 +36,18 @@ class MetaOpsEmbeddingFunction(EmbeddingFunction):
             self._load_local_model()
             return self._local_model(input)
 
-        cache_key = tuple(input)
-        if cache_key in self._cache:
-            return self._cache[cache_key]
+        cache_key = hash(tuple(input))
+        with self._cache_lock:
+            if cache_key in self._cache:
+                return self._cache[cache_key]
 
         import openai
         client = openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
         response = client.embeddings.create(input=input, model=self.model)
         embeddings = [item.embedding for item in response.data]
-        
-        # Prevent cache memory leak by setting max size limit
-        if len(self._cache) > 2000:
-            self._cache.clear()
-        self._cache[cache_key] = embeddings
+
+        with self._cache_lock:
+            if len(self._cache) > 2000:
+                self._cache.clear()
+            self._cache[cache_key] = embeddings
         return embeddings

@@ -1,10 +1,10 @@
 from google.adk.agents import Agent
 from google.adk.tools import AgentTool, FunctionTool, LongRunningFunctionTool, ToolContext
 from metaops.backends.local import LocalTerminalBackend
-from metaops.config import MetaOpsConfig
+from metaops.config import get_config
 from metaops.tools._shell_guard import check_command_allowed
 
-config = MetaOpsConfig()
+config = get_config()
 _backend = LocalTerminalBackend()
 
 async def execute_workstream_command(command: str, tool_context: ToolContext = None) -> dict:

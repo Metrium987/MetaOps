@@ -32,7 +32,7 @@ def _url_reachable(url: str, timeout: float = 1.0) -> bool:
     except OSError:
         return False
 
-_CONFIG_PATH = Path(__file__).parents[3] / "mcp_servers.json"
+_CONFIG_PATH = Path(__file__).resolve().parents[3] / "mcp_servers.json"
 
 
 def load_mcp_toolsets(config_path: Path | str | None = None) -> list[McpToolset]:

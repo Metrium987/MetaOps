@@ -1,17 +1,36 @@
 import shlex
+import logging
 from google.adk.tools import FunctionTool, ToolContext
 from metaops.backends.local import LocalTerminalBackend
 from metaops.memory.database import MemoryDatabase
 from metaops.tools._shell_guard import check_command_allowed
 
+logger = logging.getLogger(__name__)
+
 _db = MemoryDatabase()
 _backend = LocalTerminalBackend()
 
 async def execute_skill(skill_name: str, arguments: str = "", tool_context: ToolContext = None) -> dict:
-    """Executes a previously learned multi-step skill from the database."""
-    procedure = await _db.get_skill_procedure(skill_name)
-    if not procedure:
+    """Execute a previously learned and approved skill.
+
+    Refuses skills with status 'pending_review' or 'rejected'.
+    """
+    await _db.initialize()
+    skill = await _db.get_skill(skill_name)
+
+    if not skill:
         return {"status": "error", "message": f"Skill '{skill_name}' not found."}
+
+    if skill["status"] == "pending_review":
+        return {
+            "status": "error",
+            "message": f"Skill '{skill_name}' is pending review. Approve it first with approve_skill(name='{skill_name}').",
+        }
+
+    if skill["status"] == "rejected":
+        return {"status": "error", "message": f"Skill '{skill_name}' has been rejected."}
+
+    procedure = skill["instructions"]
 
     # `arguments` is caller-supplied free text — shell-quote each token before
     # splicing it into the command string, otherwise shell metacharacters in
@@ -36,7 +55,10 @@ async def execute_skill(skill_name: str, arguments: str = "", tool_context: Tool
     async for chunk in _backend.execute_stream(command):
         output_buffer.append(chunk)
     raw_output = "".join(output_buffer)
-    status = "error" if "error" in raw_output.lower() else "success"
+    # Check for explicit error markers rather than substring matching
+    # (avoids false positives from "error handling" text in output).
+    lower = raw_output.lower()
+    status = "error" if any(marker in lower for marker in ["traceback", "exception:", "fatal error"]) else "success"
     return {"status": status, "summary": raw_output[-500:]}
 
 skill_executor_tool = FunctionTool(func=execute_skill)

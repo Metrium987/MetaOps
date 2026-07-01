@@ -30,10 +30,9 @@ class HybridVectorMemoryService(BaseMemoryService):
             api_key=embedding_api_key,
             base_url=embedding_base_url,
         )
-        self.episodic  = self.client.get_or_create_collection("episodic_memory",   embedding_function=self.embed_fn)
-        self.semantic  = self.client.get_or_create_collection("semantic_memory",   embedding_function=self.embed_fn)
+        self.episodic   = self.client.get_or_create_collection("episodic_memory",   embedding_function=self.embed_fn)
+        self.semantic   = self.client.get_or_create_collection("semantic_memory",   embedding_function=self.embed_fn)
         self.procedural = self.client.get_or_create_collection("procedural_memory", embedding_function=self.embed_fn)
-        self.persona   = self.client.get_or_create_collection("persona_memory",    embedding_function=self.embed_fn)
 
     async def add_session_to_memory(self, session: Session) -> None:
         documents, metadatas, ids = [], [], []

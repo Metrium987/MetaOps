@@ -11,13 +11,13 @@ Exposed as FunctionTool for the coordinator agent.
 
 import logging
 from google.adk.agents import Agent
-from google.adk.tools import FunctionTool
-from metaops.config import MetaOpsConfig
+from google.adk.tools import FunctionTool, ToolContext
+from metaops.config import get_config
 from metaops.workflows.agent_runner import run_agent_once
 
 logger = logging.getLogger(__name__)
 
-config = MetaOpsConfig()
+config = get_config()
 
 MAX_REVISIONS = 3
 
@@ -70,7 +70,7 @@ reviewer_agent = Agent(
 # FunctionTool wrapper
 # ---------------------------------------------------------------------------
 
-async def vibe_code(task: str) -> dict:
+async def vibe_code(task: str, tool_context: ToolContext = None) -> dict:
     """Write code with automatic review and correction loop.
 
     Spawns a coder agent, then a reviewer. If the reviewer rejects,
@@ -79,6 +79,7 @@ async def vibe_code(task: str) -> dict:
     Args:
         task: Full description of the coding task including language,
               framework, constraints, and any examples.
+        tool_context: Optional ToolContext for role-based access control.
 
     Returns:
         dict with keys:

@@ -190,17 +190,25 @@ class ModelConfig:
         # delta.reasoning_content during streaming, causing visual freezes
         # when reasoning models (o3, o4) are used. LiteLLM extracts
         # reasoning_content properly and passes it through.
+        #
+        # NOTE: LocalOpenAILlm (local_llm_driver.py) patches missing
+        # tool_call.id/name for Ollama/LM Studio, but LiteLLM also handles
+        # this internally.  We route through LiteLLM for consistency and
+        # reasoning_content support.  _build_openai() is kept as a fallback
+        # for environments where LiteLLM is unavailable.
         _cfg_logger.debug("Using LiteLLM for provider=%s (reasoning_content support)", self.provider)
         return self._build_litellm()
 
     def _build_openai(self):
-        """Use the native OpenAI SDK driver — no LiteLLM overhead."""
+        """Use the native OpenAI SDK driver — no LiteLLM overhead.
+
+        NOTE: Currently unused — to_model() routes all OpenAI-compatible
+        providers through _build_litellm() instead, because LiteLLM handles
+        reasoning_content properly during streaming. Kept for reference and
+        potential future use with local backends.
+        """
         from metaops.core.reasoning_guard import ReasoningGuardedOpenAILlm
 
-        # Strip litellm-style prefixes that the upstream API itself doesn't
-        # expect. NOTE: OpenRouter's model identifiers genuinely include the
-        # "vendor/" segment (e.g. "openai/gpt-4o") — that's not a litellm
-        # artifact, so it must NOT be stripped or OpenRouter rejects it.
         model = self.model
         if self.provider == "openai" and model.startswith("openai/"):
             model = model[len("openai/"):]
@@ -210,54 +218,68 @@ class ModelConfig:
                     model = model[len(prefix):]
                     break
 
-        # The OpenAI SDK client is created lazily (@cached_property) and reads
-        # OPENAI_API_KEY / OPENAI_BASE_URL at that moment, so we must set them
-        # persistently in the process env.
-        if self.api_key:
-            os.environ["OPENAI_API_KEY"] = self.api_key
-        if self.base_url:
-            os.environ["OPENAI_BASE_URL"] = self.base_url
+        # Save and restore env vars to avoid polluting global state when
+        # multiple providers coexist in the same process.
+        saved = {}
+        for var in ("OPENAI_API_KEY", "OPENAI_BASE_URL"):
+            saved[var] = os.environ.get(var)
+        try:
+            if self.api_key:
+                os.environ["OPENAI_API_KEY"] = self.api_key
+            if self.base_url:
+                os.environ["OPENAI_BASE_URL"] = self.base_url
 
-        if self.provider in _LOCAL_PROVIDERS:
-            from metaops.core.local_llm_driver import LocalOpenAILlm
+            if self.provider in _LOCAL_PROVIDERS:
+                from metaops.core.local_llm_driver import LocalOpenAILlm
+                _cfg_logger.info(
+                    "Hardened local OpenAI driver: provider=%s model=%s max_tokens=%d",
+                    self.provider, model, self.max_tokens,
+                )
+                return LocalOpenAILlm(model=model, max_tokens=self.max_tokens)
 
             _cfg_logger.info(
-                "Hardened local OpenAI driver: provider=%s model=%s max_tokens=%d",
+                "Native OpenAI driver: provider=%s model=%s max_tokens=%d",
                 self.provider, model, self.max_tokens,
             )
-            return LocalOpenAILlm(model=model, max_tokens=self.max_tokens)
-
-        _cfg_logger.info(
-            "Native OpenAI driver: provider=%s model=%s max_tokens=%d",
-            self.provider, model, self.max_tokens,
-        )
-        return ReasoningGuardedOpenAILlm(model=model, max_tokens=self.max_tokens)
+            return ReasoningGuardedOpenAILlm(model=model, max_tokens=self.max_tokens)
+        finally:
+            for var, val in saved.items():
+                if val is None:
+                    os.environ.pop(var, None)
+                else:
+                    os.environ[var] = val
 
     def _build_anthropic(self):
         """Use the native Anthropic SDK driver — direct Messages API."""
         from google.adk.models.anthropic_llm import AnthropicLlm
 
         model = self.model
-        # Strip litellm-style prefix
         if model.startswith("anthropic/"):
             model = model[len("anthropic/"):]
 
-        # AnthropicLlm creates its client lazily via @cached_property
-        if self.api_key:
-            os.environ["ANTHROPIC_API_KEY"] = self.api_key
-        if self.base_url:
-            os.environ["ANTHROPIC_BASE_URL"] = self.base_url
+        # Save and restore env vars to avoid polluting global state when
+        # multiple providers coexist in the same process.
+        saved = {}
+        for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"):
+            saved[var] = os.environ.get(var)
+        try:
+            if self.api_key:
+                os.environ["ANTHROPIC_API_KEY"] = self.api_key
+            if self.base_url:
+                os.environ["ANTHROPIC_BASE_URL"] = self.base_url
 
-        # Anthropic API hard limit: 8192 output tokens (thinking + text combined).
-        # Cap at 8192 to avoid HTTP 400 errors from the Messages API.
-        capped_tokens = min(self.max_tokens, 8192)
-        _cfg_logger.info(
-            "Native Anthropic driver: provider=%s model=%s max_tokens=%d (capped from %d)",
-            self.provider, model, capped_tokens, self.max_tokens,
-        )
-        # AnthropicLlm doesn't accept retry_options directly — retries are
-        # handled by the SDK's built-in retry mechanism.
-        return AnthropicLlm(model=model, max_tokens=capped_tokens)
+            capped_tokens = min(self.max_tokens, 8192)
+            _cfg_logger.info(
+                "Native Anthropic driver: provider=%s model=%s max_tokens=%d (capped from %d)",
+                self.provider, model, capped_tokens, self.max_tokens,
+            )
+            return AnthropicLlm(model=model, max_tokens=capped_tokens)
+        finally:
+            for var, val in saved.items():
+                if val is None:
+                    os.environ.pop(var, None)
+                else:
+                    os.environ[var] = val
 
     def _build_gemini(self):
         """Use the native Google GenAI driver — direct Gemini API."""
@@ -362,3 +384,15 @@ class MetaOpsConfig:
                 "Check OPENROUTER_API_KEY (or the relevant provider key) in .env"
             )
         return True
+
+
+# Module-level singleton — all modules share one config instance.
+# Avoids 7+ redundant .env parses and provider resolutions at import time.
+_config_instance: MetaOpsConfig | None = None
+
+
+def get_config() -> MetaOpsConfig:
+    global _config_instance
+    if _config_instance is None:
+        _config_instance = MetaOpsConfig()
+    return _config_instance

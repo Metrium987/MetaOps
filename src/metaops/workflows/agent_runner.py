@@ -1,9 +1,9 @@
 """Shared lightweight agent runner for workflow tools.
 
-Provides run_agent_once() — a minimal helper that creates a throwaway
-Runner + InMemorySession, sends a single prompt, and collects the text
-output.  Used by vibe_coding, dev_cycle, and research instead of
-duplicating the same boilerplate.
+Provides run_agent_once() — a minimal helper that creates a cached
+Runner per agent, sends a single prompt, and collects the text output.
+Used by vibe_coding, dev_cycle, and research instead of duplicating
+the same boilerplate.
 """
 
 import uuid
@@ -23,6 +23,22 @@ from metaops.core.continuation import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Cache runners per agent to avoid recreating them on every call.
+# Each call still gets a fresh session (stateless).
+_runner_cache: dict[str, Runner] = {}
+
+
+def _get_runner(agent: Agent) -> Runner:
+    """Return a cached Runner for the given agent, creating one if needed."""
+    if agent.name not in _runner_cache:
+        _runner_cache[agent.name] = Runner(
+            agent=agent,
+            app_name=f"metaops_{agent.name}",
+            session_service=InMemorySessionService(),
+            artifact_service=InMemoryArtifactService(),
+        )
+    return _runner_cache[agent.name]
 
 
 async def run_agent_once(agent: Agent, prompt: str) -> str:
@@ -45,12 +61,7 @@ async def run_agent_once(agent: Agent, prompt: str) -> str:
     Returns:
         Concatenated text output from the agent (empty string if no output).
     """
-    runner = Runner(
-        agent=agent,
-        app_name=f"metaops_{agent.name}",
-        session_service=InMemorySessionService(),
-        artifact_service=InMemoryArtifactService(),
-    )
+    runner = _get_runner(agent)
     session = await runner.session_service.create_session(
         app_name=f"metaops_{agent.name}",
         user_id=agent.name,
@@ -62,7 +73,6 @@ async def run_agent_once(agent: Agent, prompt: str) -> str:
     last_error_message = None
 
     async def _run_turn(message_text: str) -> bool:
-        """Runs one turn in the shared session. Returns True if truncated mid-answer."""
         nonlocal last_error_code, last_error_message
         turn_truncated = False
         async for event in runner.run_async(
@@ -89,7 +99,7 @@ async def run_agent_once(agent: Agent, prompt: str) -> str:
     while truncated and not has_budget_exhausted(last_error_code) and continuations < MAX_CONTINUATIONS:
         continuations += 1
         logger.info(
-            "Agent '%s' output truncated by max_tokens — requesting continuation (%d/%d)",
+            "Agent '%s' output truncated — requesting continuation (%d/%d)",
             agent.name, continuations, MAX_CONTINUATIONS,
         )
         last_error_code = None

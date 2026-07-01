@@ -6,21 +6,23 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from google.adk.runners import Runner
 from google.adk.events import Event
 from google.genai import types
+from google.adk.agents.run_config import RunConfig
 from metaops.gateway.base import BaseGateway
 from google.adk.sessions import BaseSessionService
 from metaops.gateway.session_manager import SessionManager
 from metaops.core.continuation import (
-    MAX_CONTINUATIONS,
-    CONTINUE_PROMPT,
-    filter_thought_parts,
-    is_truncated,
+    run_turn_with_continuation,
     has_budget_exhausted,
 )
+from metaops.core.session_checkpoint import SessionCheckpoint
 
 logger = logging.getLogger(__name__)
 
 # Max queued messages per session before rejecting
 _MAX_PENDING = 5
+
+# Safety limit: prevent infinite LLM loops per user turn
+_DEFAULT_RUN_CONFIG = RunConfig(max_llm_calls=50)
 
 
 class TelegramBridge(BaseGateway):
@@ -79,7 +81,7 @@ class TelegramBridge(BaseGateway):
         user_id = str(update.effective_user.id)
         session_id = self.session_manager.get_session_id("telegram", user_id)
         self._initialized_sessions.discard(session_id)
-        self.session_manager.clear_session(user_id)
+        self.session_manager.clear_session("telegram", user_id)
         if self._session_service:
             try:
                 await self._session_service.delete_session(
@@ -147,49 +149,27 @@ class TelegramBridge(BaseGateway):
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         await self._ensure_session(user_id, session_id, user.first_name or user_id)
 
-        content = types.Content(role="user", parts=[types.Part(text=user_input)])
+        checkpoint = SessionCheckpoint(f"telegram:{user_id}")
         try:
             self.session_manager.set_busy(session_id, True)
-            parts: list[str] = []
-            last_error_code = None
-
-            async def _run_turn(message_text: str) -> bool:
-                """Runs one turn. Returns True if truncated mid-answer."""
-                nonlocal last_error_code
-                turn_truncated = False
-                async for event in self.runner.run_async(
-                    user_id=user_id, session_id=session_id,
-                    new_message=types.Content(parts=[types.Part(text=message_text)]),
-                ):
-                    if event.error_code:
-                        last_error_code = event.error_code
-                    if is_truncated(event):
-                        turn_truncated = True
-                    if event.content:
-                        parts.extend(filter_thought_parts(event.content.parts))
-                return turn_truncated
-
-            truncated = await _run_turn(user_input)
-
-            continuations = 0
-            while truncated and not has_budget_exhausted(last_error_code) and continuations < MAX_CONTINUATIONS:
-                continuations += 1
-                logger.info("Telegram output truncated — requesting continuation (%d/%d)", continuations, MAX_CONTINUATIONS)
-                last_error_code = None
-                truncated = await _run_turn(CONTINUE_PROMPT)
-
-            text = "\n".join(parts)
+            text, error_code = await run_turn_with_continuation(
+                runner=self.runner,
+                user_id=user_id,
+                session_id=session_id,
+                message_text=user_input,
+                run_config=_DEFAULT_RUN_CONFIG,
+            )
+            checkpoint.save({"last_user_input": user_input, "last_response": text[:2000]})
             if text:
                 for i in range(0, len(text), 4000):
                     await context.bot.send_message(chat_id=chat_id, text=text[i : i + 4000])
-            elif has_budget_exhausted(last_error_code):
+            elif has_budget_exhausted(error_code):
                 await context.bot.send_message(chat_id=chat_id, text="Response was consumed by internal reasoning. Please retry with a simpler request.")
         except Exception as exc:
             logger.error("Error for user %s: %s", user_id, exc)
             await context.bot.send_message(chat_id=chat_id, text=f"System Error: {exc}")
         finally:
             self.session_manager.set_busy(session_id, False)
-            # Process any queued messages from this session
             await self._drain_pending(session_id, user_id, context)
 
     async def _drain_pending(self, session_id: str, user_id: str, context: ContextTypes.DEFAULT_TYPE):
@@ -201,19 +181,20 @@ class TelegramBridge(BaseGateway):
             try:
                 msg_text, chat_id = queue.get_nowait()
                 logger.info("Draining queued message for session %s", session_id)
-                # Re-trigger handle_message logic for the queued message
-                content = types.Content(role="user", parts=[types.Part(text=msg_text)])
                 self.session_manager.set_busy(session_id, True)
                 try:
-                    async for event in self.runner.run_async(
-                        user_id=user_id, session_id=session_id,
-                        new_message=content,
-                    ):
-                        if event.content:
-                            text = "".join(filter_thought_parts(event.content.parts))
-                            if text:
-                                for i in range(0, len(text), 4000):
-                                    await context.bot.send_message(chat_id=chat_id, text=text[i : i + 4000])
+                    text, error_code = await run_turn_with_continuation(
+                        runner=self.runner,
+                        user_id=user_id,
+                        session_id=session_id,
+                        message_text=msg_text,
+                        run_config=_DEFAULT_RUN_CONFIG,
+                    )
+                    if text:
+                        for i in range(0, len(text), 4000):
+                            await context.bot.send_message(chat_id=chat_id, text=text[i : i + 4000])
+                    elif has_budget_exhausted(error_code):
+                        await context.bot.send_message(chat_id=chat_id, text="Response was consumed by internal reasoning. Please retry.")
                 finally:
                     self.session_manager.set_busy(session_id, False)
             except asyncio.QueueEmpty:

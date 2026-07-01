@@ -22,12 +22,6 @@ _SENSITIVE_TOOLS = frozenset({
     "full_dev_cycle",
     "execute_skill",
     "ingest_file_dependency",
-    "write_file",
-    "create_directory",
-    "move_file",
-    "filesystem/write_file",
-    "filesystem/create_directory",
-    "filesystem/move_file",
 })
 
 
@@ -48,7 +42,7 @@ async def auto_inject_memory_callback(callback_context: CallbackContext):
         return
     try:
         await _skill_db.initialize()
-        skill_names = await _skill_db.list_skill_names()
+        skill_names = await _skill_db.list_skill_names(status="approved")
         if skill_names:
             callback_context.state["available_skills"] = ", ".join(skill_names)
         callback_context.state["skills_loaded"] = True
@@ -96,7 +90,12 @@ async def memory_indexing_callback(callback_context: CallbackContext):
 
 
 async def skill_harvest_callback(callback_context: CallbackContext):
-    """Parse [SKILL_CREATED] blocks from agent output and persist them."""
+    """Persist skills from agent output.
+
+    Legacy path: still parses [SKILL_CREATED] blocks for backward compat,
+    but writes through the unified commit_skill (L1/L2/L3, pending_review).
+    New skills should be created via save_procedural_skill tool instead.
+    """
     agent_output = ""
     for event in reversed(callback_context.session.events):
         if (event.author == "metaops_coordinator"
@@ -113,17 +112,24 @@ async def skill_harvest_callback(callback_context: CallbackContext):
         re.DOTALL,
     )
     if match:
-        name      = match.group(1).strip()
-        trigger   = match.group(2).strip()
-        procedure = match.group(3).strip()
-        task = asyncio.create_task(_skill_db.commit_skill(name, trigger, procedure))
+        name        = match.group(1).strip()
+        description = match.group(2).strip()
+        instructions = match.group(3).strip()
+        task = asyncio.create_task(
+            _skill_db.commit_skill(
+                name=name,
+                description=description,
+                instructions=instructions,
+                status="pending_review",
+            )
+        )
         def log_task_exception(t):
             try:
                 t.result()
             except Exception as exc:
                 logger.error("Failed to commit harvested skill: %s", exc)
         task.add_done_callback(log_task_exception)
-        logger.info("Skill harvested and queued for persistence: %s", name)
+        logger.info("Skill harvested (pending_review): %s", name)
 
 
 async def combined_after_agent_callback(callback_context: CallbackContext):

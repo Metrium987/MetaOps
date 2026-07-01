@@ -5,7 +5,7 @@ the checkpoint can be materialized into session history so no tool
 results are lost.
 
 Follows the Nanobot pattern: one JSON file per session, overwritten
-on each turn boundary.
+on each turn boundary.  Old checkpoints are cleaned up automatically.
 """
 
 import json
@@ -18,6 +18,27 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 _CHECKPOINT_DIR = Path(os.getenv("METAOPS_CHECKPOINT_DIR", "~/.metaops/checkpoints")).expanduser()
+
+# Checkpoints older than this are auto-cleaned on save (default: 24 hours)
+_CHECKPOINT_TTL_SECONDS = 86400
+
+
+def cleanup_stale_checkpoints(max_age_seconds: int = _CHECKPOINT_TTL_SECONDS) -> int:
+    """Remove checkpoint files older than max_age_seconds. Returns count removed."""
+    if not _CHECKPOINT_DIR.exists():
+        return 0
+    now = time.time()
+    removed = 0
+    for f in _CHECKPOINT_DIR.glob("*.json"):
+        try:
+            if now - f.stat().st_mtime > max_age_seconds:
+                f.unlink()
+                removed += 1
+        except OSError:
+            pass
+    if removed:
+        logger.info("Cleaned up %d stale checkpoint(s)", removed)
+    return removed
 
 
 class SessionCheckpoint:
@@ -69,6 +90,8 @@ class SessionCheckpoint:
             logger.debug("Saved checkpoint for session %s", self.session_key)
         except OSError as e:
             logger.warning("Failed to save checkpoint for %s: %s", self.session_key, e)
+        # Lazy cleanup: remove stale checkpoints from other sessions
+        cleanup_stale_checkpoints()
 
     def clear(self) -> None:
         """Remove checkpoint file from disk."""

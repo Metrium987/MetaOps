@@ -4,6 +4,7 @@ from google.adk.tools import FunctionTool, ToolContext
 from metaops.memory.vector_service import HybridVectorMemoryService
 
 _memory_service: HybridVectorMemoryService = None
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 def init_rag_tools(memory_service: HybridVectorMemoryService):
     global _memory_service
@@ -25,7 +26,7 @@ async def ingest_file_dependency(file_path: str, description: str, tool_context:
     # inside the workspace that points outside it is caught too — a plain
     # string-prefix check (e.g. abs_path.startswith(workspace_root)) is not:
     # it would let "/workspace-evil/x" pass a check against "/workspace".
-    workspace_root = Path.cwd().resolve()
+    workspace_root = _PROJECT_ROOT.resolve()
     try:
         abs_path = Path(file_path).resolve()
     except (OSError, RuntimeError):
