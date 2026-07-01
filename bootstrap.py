@@ -215,12 +215,28 @@ for db_name, schema in [
     """),
 ]:
     db_path = DATA_DIR / db_name
-    if not db_path.exists():
+    try:
         conn = sqlite3.connect(str(db_path))
         if schema:
             conn.executescript(schema)
         conn.close()
         ok(f"{db_name} created")
+    except Exception as e:
+        warn(f"Failed to create {db_name}: {e}")
+
+# Verify all DBs exist
+for f in ["metaops_sessions.db", "metaops_skills.db"]:
+    if (DATA_DIR / f).exists():
+        ok(f"{f} verified")
+    else:
+        warn(f"{f} MISSING — will be created at first launch")
+
+# Verify all DBs exist
+for f in ["metaops_sessions.db", "metaops_skills.db"]:
+    if (DATA_DIR / f).exists():
+        ok(f"{f} verified")
+    else:
+        warn(f"{f} MISSING — will be created at first launch")
 
 # Initialize ChromaDB collections
 chroma_dir = DATA_DIR / "metaops_vector_db"

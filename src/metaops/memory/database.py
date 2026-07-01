@@ -1,8 +1,16 @@
 import aiosqlite
 import os
+from pathlib import Path
 from typing import List, Optional
 
-DB_PATH = os.getenv("METAOPS_SKILLS_DB", os.getenv("METAOPS_DB_PATH", "./data/metaops_skills.db"))
+# Resolve relative to project root (same logic as config.py)
+_project_root = Path(__file__).resolve().parent.parent.parent.parent
+_default = str(_project_root / ".data" / "metaops_skills.db")
+DB_PATH = os.getenv("METAOPS_SKILLS_DB", os.getenv("METAOPS_DB_PATH", _default))
+# Ensure relative paths from .env resolve against project root, not cwd
+_db = Path(DB_PATH)
+if not _db.is_absolute():
+    DB_PATH = str(_project_root / _db)
 
 class MemoryDatabase:
     def __init__(self, db_path: str = DB_PATH):

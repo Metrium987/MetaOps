@@ -226,11 +226,19 @@ def _db_reset(args: argparse.Namespace):
     config = MetaOpsConfig()
     target = args.target or "sessions"
 
+    # Resolve artifacts path relative to project root
+    from pathlib import Path as _Path
+    _proj = _Path(__file__).resolve().parent.parent.parent
+    _artifacts_path = os.getenv("METAOPS_ARTIFACTS_DIR", str(_proj / ".data" / "artifacts"))
+    _artifacts_p = _Path(_artifacts_path)
+    if not _artifacts_p.is_absolute():
+        _artifacts_p = _proj / _artifacts_p
+
     targets = {
         "sessions": ("SQLite sessions", config.sessions_db),
         "skills": ("SQLite skills", config.skills_db),
         "vector": ("ChromaDB vector", config.vector_db),
-        "artifacts": ("File artifacts", os.getenv("METAOPS_ARTIFACTS_DIR", "./data/artifacts")),
+        "artifacts": ("File artifacts", str(_artifacts_p)),
     }
 
     if target == "all":
