@@ -1,9 +1,12 @@
+import logging
 import os
+import re
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
+_cfg_logger = logging.getLogger("metaops.config")
 
 # Sensible default model per provider — used when METAOPS_*_MODEL is not explicitly set
 _PROVIDER_DEFAULT_MODELS: dict[str, str] = {
@@ -94,50 +97,35 @@ def resolve_provider(provider: str) -> tuple[Optional[str], Optional[str]]:
     return api_key, base_url
 
 
-# Providers natively supported by LiteLLM — no openai/ prefix needed.
-# Only consulted by _build_litellm(), the final fallback in to_model(); any
-# provider already claimed by _ANTHROPIC_NATIVE_PROVIDERS, _GEMINI_NATIVE_PROVIDERS
-# or _OPENAI_COMPATIBLE_PROVIDERS earlier in to_model() never reaches it, so
-# listing those here too would be dead/misleading (e.g. ollama, openrouter).
-_LITELLM_NATIVE_PROVIDERS = {
-    "openai", "anthropic", "gemini", "groq", "mistral", "cohere",
-    "perplexity", "togetherai", "fireworks", "nvidia", "huggingface",
-    "xai", "deepseek", "azure",
-}
+# Providers that use the native Anthropic Messages API
+_ANTHROPIC_NATIVE_PROVIDERS: set[str] = {"anthropic", "minimax"}
+
+# Providers that use the native Google GenAI API
+_GEMINI_NATIVE_PROVIDERS: set[str] = {"gemini"}
 
 # Providers whose API is OpenAI-compatible (/v1/chat/completions)
-# → can use the native OpenAI SDK driver instead of LiteLLM
-_OPENAI_COMPATIBLE_PROVIDERS = {
+# → all route through LiteLLM with openai/ prefix (see _build_litellm)
+_OPENAI_COMPATIBLE_PROVIDERS: set[str] = {
     "openai", "groq", "xai", "deepseek", "fireworks", "nvidia",
     "togetherai", "perplexity", "huggingface", "mistral",
-    # Aggregators / inference services that expose /v1/chat/completions
+    # Aggregators / inference services
     "openrouter", "nousresearch", "novita", "kilocode", "opencode",
     "arcee", "gmi", "copilot",
-    # Asian providers (OpenAI-compatible)
+    # Asian providers
     "alibaba", "kimi", "stepfun", "xiaomi", "tencent",
     # Local / self-hosted
     "ollama", "lmstudio",
 }
 
-# Local / self-hosted providers — routed through a hardened OpenAI driver
-# that tolerates missing tool_call id/name (common with small local models)
-_LOCAL_PROVIDERS = {"ollama", "lmstudio"}
+# Local / self-hosted providers — get a hardened driver that tolerates
+# missing tool_call id/name (common with small local models)
+_LOCAL_PROVIDERS: set[str] = {"ollama", "lmstudio"}
 
 
 def _is_reasoning_model(model_name: str) -> bool:
     """Check if a model is an OpenAI reasoning model (o3, o4, etc.)."""
-    import re
     pattern = r"^(o3|o4|gpt-5)(?:$|[-.])"
     return bool(re.match(pattern, model_name))
-
-# Providers that use the native Anthropic Messages API
-_ANTHROPIC_NATIVE_PROVIDERS = {"anthropic", "minimax"}
-
-# Providers that use the native Google GenAI API
-_GEMINI_NATIVE_PROVIDERS = {"gemini"}
-
-import logging
-_cfg_logger = logging.getLogger("metaops.config")
 
 
 class ModelConfig:
