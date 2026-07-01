@@ -50,7 +50,32 @@ class HybridVectorMemoryService(BaseMemoryService):
                     ids.append(str(uuid.uuid4()))
         if documents:
             self.episodic.add(documents=documents, metadatas=metadatas, ids=ids)
-            logger.info(f"Indexed {len(documents)} episodic chunks from session {session.id}")
+            logger.info("Indexed %d episodic chunks from session %s", len(documents), session.id)
+
+    async def add_events_to_memory(
+        self,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+        events: list,
+    ) -> None:
+        """Index only specific events (incremental) instead of the full session."""
+        documents, metadatas, ids = [], [], []
+        for event in events:
+            if event.content and event.content.parts:
+                text = "\n".join([p.text for p in event.content.parts if p.text])
+                if text.strip():
+                    documents.append(text)
+                    metadatas.append({
+                        "session_id": session_id,
+                        "author": event.author,
+                        "app_name": app_name,
+                        "user_id": user_id,
+                    })
+                    ids.append(str(uuid.uuid4()))
+        if documents:
+            self.episodic.add(documents=documents, metadatas=metadatas, ids=ids)
+            logger.info("Indexed %d episodic chunks from session %s", len(documents), session_id)
 
     async def search_memory(self, *, app_name: str, user_id: str, query: str) -> SearchMemoryResponse:
         results = []

@@ -32,32 +32,42 @@ class CLIBridge(BaseGateway):
         print("MetaOps CLI Gateway Initialized. Type '/exit' to quit.")
         session_id = self.session_manager.get_session_id("cli", self.user_id)
         checkpoint = SessionCheckpoint(f"cli:{self.user_id}")
-        while True:
-            try:
-                if self._is_interactive:
-                    user_input = await self.session.prompt_async("MetaOps> ", multiline=False)
-                else:
-                    loop = asyncio.get_running_loop()
-                    user_input = await loop.run_in_executor(None, input, "MetaOps> ")
+        try:
+            while True:
+                try:
+                    if self._is_interactive:
+                        user_input = await self.session.prompt_async("MetaOps> ", multiline=False)
+                    else:
+                        loop = asyncio.get_running_loop()
+                        user_input = await loop.run_in_executor(None, input, "MetaOps> ")
 
-                if user_input.strip().lower() in ["/exit", "/quit"]: break
-                if not user_input.strip(): continue
+                    if user_input.strip().lower() in ["/exit", "/quit"]:
+                        print("Goodbye.")
+                        return
+                    if not user_input.strip():
+                        continue
 
-                text, error_code = await run_turn_with_continuation(
-                    runner=self.runner,
-                    user_id=self.user_id,
-                    session_id=session_id,
-                    message_text=user_input,
-                    run_config=_make_run_config(),
-                )
-                checkpoint.save({"last_user_input": user_input, "last_response": text[:2000]})
-                if text:
-                    print(f"\n\033[92mMetaOps:\033[0m {text}\n", flush=True)
-                elif has_budget_exhausted(error_code):
-                    print("\n\033[91mResponse consumed by internal reasoning. Please retry.\033[0m\n", flush=True)
+                    text, error_code = await run_turn_with_continuation(
+                        runner=self.runner,
+                        user_id=self.user_id,
+                        session_id=session_id,
+                        message_text=user_input,
+                        run_config=_make_run_config(),
+                    )
+                    checkpoint.save({"last_user_input": user_input, "last_response": text[:2000]})
+                    if text:
+                        print(f"\n\033[92mMetaOps:\033[0m {text}\n", flush=True)
+                    elif has_budget_exhausted(error_code):
+                        print("\n\033[91mResponse consumed by internal reasoning. Please retry.\033[0m\n", flush=True)
 
-            except KeyboardInterrupt: continue
-            except EOFError: break
+                except KeyboardInterrupt:
+                    print("\nGoodbye.")
+                    return
+                except EOFError:
+                    print("\nGoodbye.")
+                    return
+        except Exception as exc:
+            print(f"\n[MetaOps] CLI error: {exc}")
 
     async def stop(self): pass
 

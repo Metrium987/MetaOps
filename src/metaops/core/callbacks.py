@@ -60,6 +60,7 @@ async def memory_indexing_callback(callback_context: CallbackContext):
     Instead, we track the last indexed event count and only index new ones.
     """
     if _memory_service is None:
+        logger.debug("Memory service not initialized — skipping indexing")
         return
     try:
         session = callback_context.session
@@ -78,15 +79,16 @@ async def memory_indexing_callback(callback_context: CallbackContext):
                 events=new_events,
             )
             callback_context.state["_last_indexed_event_count"] = current_count
-            logger.debug("Indexed %d new events from session %s", len(new_events), session.id)
+            logger.info("Indexed %d new events from session %s", len(new_events), session.id)
     except NotImplementedError:
         # Fallback: add_session_to_memory if add_events_to_memory not supported
         try:
             await _memory_service.add_session_to_memory(callback_context.session)
+            logger.info("Indexed session %s via fallback add_session_to_memory", callback_context.session.id)
         except Exception as exc:
-            logger.warning("Failed to index session to memory: %s", exc)
+            logger.warning("Failed to index session to memory (fallback): %s", exc)
     except Exception as exc:
-        logger.warning("Failed to index session to memory: %s", exc)
+        logger.warning("Failed to index session %s to memory: %s", callback_context.session.id, exc)
 
 
 async def skill_harvest_callback(callback_context: CallbackContext):
