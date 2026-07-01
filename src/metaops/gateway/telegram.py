@@ -59,7 +59,10 @@ class TelegramBridge(BaseGateway):
         )
         await self.application.initialize()
         await self.application.start()
-        await self.application.updater.start_polling(drop_pending_updates=True)
+        await self.application.updater.start_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+        )
         logger.info("Telegram gateway polling.")
 
     async def stop(self):
