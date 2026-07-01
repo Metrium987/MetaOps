@@ -26,9 +26,9 @@ _SPINNER_INTERVAL = 0.08
 
 
 class CLIBridge(BaseGateway):
-    def __init__(self, runner_or_none, session_manager: SessionManager):
+    def __init__(self, runner, session_manager: SessionManager):
         """Accept either a ready Runner or None for lazy initialization."""
-        self._runner = runner_or_none
+        self._runner = runner
         self._runner_lock = asyncio.Lock()
         self.session_manager = session_manager
         self._is_interactive = True
