@@ -200,6 +200,25 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "artifacts").mkdir(parents=True, exist_ok=True)
 ok(f"{DATA_DIR} ready")
 
+# Initialize databases so first launch is instant
+import sqlite3
+for db_name in ["metaops_sessions.db", "metaops_skills.db"]:
+    db_path = DATA_DIR / db_name
+    if not db_path.exists():
+        conn = sqlite3.connect(str(db_path))
+        conn.close()
+        ok(f"{db_name} created")
+
+# Initialize ChromaDB collections
+try:
+    import chromadb
+    client = chromadb.PersistentClient(path=str(DATA_DIR / "metaops_vector_db"))
+    for name in ["episodic_memory", "semantic_memory", "procedural_memory", "persona_memory"]:
+        client.get_or_create_collection(name)
+    ok("ChromaDB vector collections created")
+except Exception as e:
+    warn(f"ChromaDB init failed (will retry at launch): {e}")
+
 # .env — always inside PROJECT_ROOT
 if ENV_FILE.exists():
     ok(".env already exists")
