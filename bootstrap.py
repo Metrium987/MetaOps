@@ -259,6 +259,7 @@ for tool_bin, package in [("bandit", "bandit"), ("pip-audit", "pip-audit")]:
 # ── 5. First-run setup ────────────────────────────────────────────────────────
 header("5 / 5  First-run setup")
 
+Path("data").mkdir(parents=True, exist_ok=True)
 Path("data/artifacts").mkdir(parents=True, exist_ok=True)
 ok("./data/ directories created")
 

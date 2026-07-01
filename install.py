@@ -90,8 +90,8 @@ else:
 # ── 6. Data directories ───────────────────────────────────────────────────────
 header("6 / 7  Data directories")
 dirs = [
-    Path("data/artifacts"),
     Path("data"),
+    Path("data/artifacts"),
 ]
 for d in dirs:
     d.mkdir(parents=True, exist_ok=True)

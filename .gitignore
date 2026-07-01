@@ -11,7 +11,8 @@ SOURCE/
 mcp_servers.json
 
 # Runtime data
-data/
+data/*
+!data/.gitkeep
 
 # Python
 __pycache__/
