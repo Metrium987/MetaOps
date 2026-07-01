@@ -202,10 +202,23 @@ ok(f"{DATA_DIR} ready")
 
 # Initialize databases so first launch is instant
 import sqlite3
-for db_name in ["metaops_sessions.db", "metaops_skills.db"]:
+for db_name, schema in [
+    ("metaops_sessions.db", None),
+    ("metaops_skills.db", """
+        CREATE TABLE IF NOT EXISTS skills (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE,
+            trigger_pattern TEXT,
+            procedure TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """),
+]:
     db_path = DATA_DIR / db_name
     if not db_path.exists():
         conn = sqlite3.connect(str(db_path))
+        if schema:
+            conn.executescript(schema)
         conn.close()
         ok(f"{db_name} created")
 
