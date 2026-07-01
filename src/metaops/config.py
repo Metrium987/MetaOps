@@ -181,7 +181,7 @@ class ModelConfig:
 
     def _build_openai(self):
         """Use the native OpenAI SDK driver — no LiteLLM overhead."""
-        from google.adk.labs.openai import OpenAILlm
+        from metaops.core.reasoning_guard import ReasoningGuardedOpenAILlm
 
         # Strip litellm-style prefixes that the upstream API itself doesn't
         # expect. NOTE: OpenRouter's model identifiers genuinely include the
@@ -217,7 +217,7 @@ class ModelConfig:
             "Native OpenAI driver: provider=%s model=%s max_tokens=%d",
             self.provider, model, self.max_tokens,
         )
-        return OpenAILlm(model=model, max_tokens=self.max_tokens)
+        return ReasoningGuardedOpenAILlm(model=model, max_tokens=self.max_tokens)
 
     def _build_anthropic(self):
         """Use the native Anthropic SDK driver — direct Messages API."""

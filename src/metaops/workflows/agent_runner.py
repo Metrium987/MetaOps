@@ -14,7 +14,18 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.artifacts import InMemoryArtifactService
 from google.genai import types
 
+from metaops.core.reasoning_guard import REASONING_BUDGET_EXHAUSTED
+
 logger = logging.getLogger(__name__)
+
+# Mirrors the continuation-retry cap used by reference agent runtimes (e.g.
+# Hermes) for responses truncated mid-answer by the max_tokens budget.
+MAX_CONTINUATIONS = 3
+_CONTINUE_PROMPT = (
+    "Your previous response was cut off by the output token limit. "
+    "Continue exactly where you left off — do not repeat anything already "
+    "written, do not restart the explanation or the code block."
+)
 
 
 async def run_agent_once(agent: Agent, prompt: str) -> str:
@@ -22,6 +33,13 @@ async def run_agent_once(agent: Agent, prompt: str) -> str:
 
     Creates an ephemeral session (no persistence) so each call is
     stateless.  Filters out thought/reasoning parts automatically.
+
+    If a response is truncated mid-answer by the max_tokens budget (flagged
+    by ReasoningGuardedOpenAILlm via custom_metadata), automatically asks the
+    model to continue in the same session, up to MAX_CONTINUATIONS times, and
+    concatenates the parts. If a response instead exhausts the entire budget
+    on internal reasoning with zero visible output (REASONING_BUDGET_EXHAUSTED),
+    retrying is pointless — that's reported immediately as a clear error.
 
     Args:
         agent: The ADK Agent to run.
@@ -45,27 +63,52 @@ async def run_agent_once(agent: Agent, prompt: str) -> str:
     parts: list[str] = []
     last_error_code = None
     last_error_message = None
-    async for event in runner.run_async(
-        user_id=agent.name,
-        session_id=session.id,
-        new_message=types.Content(parts=[types.Part(text=prompt)]),
-    ):
-        if event.error_code or event.error_message:
-            last_error_code = event.error_code
-            last_error_message = event.error_message
-            logger.warning(
-                "Agent '%s' event reported an error: code=%s message=%s",
-                agent.name, last_error_code, last_error_message,
-            )
-        if event.content:
-            for part in event.content.parts or []:
-                # Skip thinking/reasoning parts
-                if getattr(part, "thought", False):
-                    continue
-                if part.text:
-                    parts.append(part.text)
+
+    async def _run_turn(message_text: str) -> bool:
+        """Runs one turn in the shared session. Returns True if truncated mid-answer."""
+        nonlocal last_error_code, last_error_message
+        turn_truncated = False
+        async for event in runner.run_async(
+            user_id=agent.name,
+            session_id=session.id,
+            new_message=types.Content(parts=[types.Part(text=message_text)]),
+        ):
+            if event.error_code or event.error_message:
+                last_error_code = event.error_code
+                last_error_message = event.error_message
+                logger.warning(
+                    "Agent '%s' event reported an error: code=%s message=%s",
+                    agent.name, last_error_code, last_error_message,
+                )
+            if event.custom_metadata and event.custom_metadata.get("metaops_truncated"):
+                turn_truncated = True
+            if event.content:
+                for part in event.content.parts or []:
+                    # Skip thinking/reasoning parts
+                    if getattr(part, "thought", False):
+                        continue
+                    if part.text:
+                        parts.append(part.text)
+        return turn_truncated
+
+    truncated = await _run_turn(prompt)
+
+    continuations = 0
+    while truncated and last_error_code != REASONING_BUDGET_EXHAUSTED and continuations < MAX_CONTINUATIONS:
+        continuations += 1
+        logger.info(
+            "Agent '%s' output truncated by max_tokens — requesting continuation (%d/%d)",
+            agent.name, continuations, MAX_CONTINUATIONS,
+        )
+        last_error_code = None
+        last_error_message = None
+        truncated = await _run_turn(_CONTINUE_PROMPT)
 
     output = "\n".join(parts)
+
+    if last_error_code == REASONING_BUDGET_EXHAUSTED and not output:
+        raise RuntimeError(f"Agent '{agent.name}': {last_error_message}")
+
     if not output:
         raise RuntimeError(
             f"Agent '{agent.name}' returned no text output "

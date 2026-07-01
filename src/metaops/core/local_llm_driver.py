@@ -1,12 +1,12 @@
 import logging
 import uuid
 
-from google.adk.labs.openai import OpenAILlm
+from metaops.core.reasoning_guard import ReasoningGuardedOpenAILlm
 
 logger = logging.getLogger("metaops.core.local_llm_driver")
 
 
-class LocalOpenAILlm(OpenAILlm):
+class LocalOpenAILlm(ReasoningGuardedOpenAILlm):
     """OpenAILlm hardened for local/self-hosted backends (Ollama, LM Studio).
 
     Local OpenAI-compatible servers don't always populate tool_call.id or
@@ -15,6 +15,9 @@ class LocalOpenAILlm(OpenAILlm):
     its later function_response by id, so a missing one silently breaks the
     tool-call turn. Patch responses after they come back from the unmodified
     upstream driver rather than re-implementing its parsing.
+
+    Also inherits ReasoningGuardedOpenAILlm's max_tokens-budget-exhaustion
+    detection, since local reasoning-capable models can hit the same wall.
     """
 
     async def generate_content_async(self, llm_request, stream: bool = False):
