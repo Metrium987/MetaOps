@@ -85,13 +85,13 @@ npm = shutil.which("npm")
 if npm:
     info("Installing local MCP servers via npm (filesystem, memory)...")
     r = subprocess.run(
-        [npm, "install", "@modelcontextprotocol/server-filesystem", "@modelcontextprotocol/server-memory", "--quiet"],
+        [npm, "install", "@modelcontextprotocol/server-filesystem", "@modelcontextprotocol/server-memory", "@portkey-ai/gateway", "--quiet"],
         cwd=str(PROJECT_ROOT)
     )
     if r.returncode == 0:
-        ok("MCP servers installed locally")
+        ok("MCP servers and Portkey gateway installed locally")
     else:
-        warn("Failed to install local MCP servers via npm — npx fallback will be used at runtime")
+        warn("Failed to install local MCP/Portkey servers via npm — npx fallback will be used at runtime")
 else:
     warn("npm not found — skipping local MCP server installation")
 

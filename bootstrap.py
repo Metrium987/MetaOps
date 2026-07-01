@@ -154,9 +154,9 @@ ok("MetaOps installed")
 npm = shutil.which("npm")
 if npm:
     info("Installing MCP servers via npm ...")
-    r = subprocess.run([npm, "install", "@modelcontextprotocol/server-filesystem", "@modelcontextprotocol/server-memory", "--save"], cwd=str(PROJECT_ROOT))
+    r = subprocess.run([npm, "install", "@modelcontextprotocol/server-filesystem", "@modelcontextprotocol/server-memory", "@portkey-ai/gateway", "--save"], cwd=str(PROJECT_ROOT))
     if r.returncode == 0:
-        ok("MCP servers installed locally")
+        ok("MCP servers and Portkey gateway installed locally")
     else:
         warn("npm install failed — npx fallback at runtime")
 

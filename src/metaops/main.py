@@ -12,6 +12,62 @@ except Exception:
     __version__ = "3.0.0"
 
 
+def _is_port_in_use(port: int) -> bool:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
+
+def start_portkey_if_needed():
+    import shutil
+    import subprocess
+    import os
+    
+    portkey_url = os.getenv("PORTKEY_GATEWAY_URL")
+    if not portkey_url:
+        return None
+        
+    port = 8787
+    if ":" in portkey_url:
+        try:
+            parts = portkey_url.split(":")
+            if len(parts) >= 3:
+                port = int(parts[2].split("/")[0])
+            elif len(parts) == 2:
+                port = int(parts[1].split("/")[0])
+        except Exception:
+            pass
+
+    if _is_port_in_use(port):
+        logger.info("Portkey gateway already running on port %d", port)
+        return None
+        
+    npx = shutil.which("npx")
+    if not npx:
+        logger.warning("npx not found — cannot start Portkey gateway automatically")
+        return None
+        
+    logger.info("Starting Portkey gateway on port %d in the background...", port)
+    try:
+        kwargs = {}
+        if sys.platform == "win32":
+            kwargs["shell"] = True
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            
+        proc = subprocess.Popen(
+            [npx, "@portkey-ai/gateway", "--port", str(port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            **kwargs
+        )
+        return proc
+    except Exception as e:
+        logger.error("Failed to start Portkey gateway: %s", e)
+        return None
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="metaops",
@@ -111,6 +167,7 @@ async def main(args: argparse.Namespace):
     from metaops.gateway.delivery import DeliveryService
 
     config = get_config()
+    portkey_proc = start_portkey_if_needed()
 
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(
@@ -202,6 +259,14 @@ async def main(args: argparse.Namespace):
         if telegram_bridge:
             await telegram_bridge.stop()
         await _close_mcp_toolsets(runner)
+        if portkey_proc:
+            logger.info("Stopping Portkey gateway...")
+            portkey_proc.terminate()
+            import subprocess
+            try:
+                portkey_proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                portkey_proc.kill()
 
 
 async def _close_mcp_toolsets(runner) -> None:
