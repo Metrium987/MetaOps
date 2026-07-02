@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import re
 from typing import Optional
 
@@ -64,6 +65,11 @@ class TelegramBridge(BaseGateway):
     async def start(self):
         self.application.add_handler(CommandHandler("start", self.cmd_start))
         self.application.add_handler(CommandHandler("clear", self.cmd_clear))
+        self.application.add_handler(CommandHandler("help", self.cmd_help))
+        self.application.add_handler(CommandHandler("new", self.cmd_new))
+        self.application.add_handler(CommandHandler("stop", self.cmd_stop))
+        self.application.add_handler(CommandHandler("status", self.cmd_status))
+        self.application.add_handler(CommandHandler("resume", self.cmd_resume))
         
         # MessageHandler matches TEXT (both normal message and channel post)
         self.application.add_handler(
@@ -190,6 +196,166 @@ class TelegramBridge(BaseGateway):
             reply_to_message_id=reply_id
         )
 
+    async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        text = (
+            "🤖 *MetaOps Bot Commands*\n\n"
+            "🔸 /start — Initialize the bot and check connectivity.\n"
+            "🔸 /new — Start a new clean session (clears history/session database).\n"
+            "🔸 /status — Show current session info (session ID, active model, token limits).\n"
+            "🔸 /stop — Kill any running background execution tasks for your session.\n"
+            "🔸 /clear — Clear the current session history.\n"
+            "🔸 /resume <name> — Switch to/resume a named session."
+        )
+        reply_id = update.effective_message.message_id if self._config.telegram_reply_to_message else None
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text,
+            parse_mode="Markdown",
+            reply_to_message_id=reply_id
+        )
+
+    async def cmd_new(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.effective_user
+        if not user:
+            return
+        user_id = str(user.id)
+        session_id = self.session_manager.get_session_id("telegram", user_id)
+        
+        # Authorization check
+        chat = update.effective_chat
+        is_allowed = False
+        if self.allowed_user_ids is None:
+            is_allowed = True
+        else:
+            if user_id in self.allowed_user_ids or str(chat.id) in self.allowed_user_ids:
+                is_allowed = True
+            elif str(user.id) in self.allowed_user_ids:
+                is_allowed = True
+
+        if not is_allowed:
+            if chat.type not in ("group", "supergroup", "channel"):
+                await context.bot.send_message(chat_id=chat.id, text="Access denied.")
+            return
+
+        self._initialized_sessions.discard(session_id)
+        self.session_manager.clear_session("telegram", user_id)
+        task = self._session_tasks.pop(session_id, None)
+        if task and not task.done():
+            task.cancel()
+        self._active_sessions.pop(session_id, None)
+        if self._session_service:
+            try:
+                await self._session_service.delete_session(
+                    app_name="metaops_enterprise", user_id=user_id, session_id=session_id
+                )
+            except Exception as e:
+                logger.error("Failed to delete session %s: %s", session_id, e)
+        
+        # Generate new session ID and ensure it is created
+        new_session_id = self.session_manager.get_session_id("telegram", user_id)
+        await self._ensure_session(user_id, new_session_id, user.first_name or user_id)
+        
+        reply_id = update.effective_message.message_id if self._config.telegram_reply_to_message else None
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text="✨ Fresh session started! Send a message to begin.",
+            reply_to_message_id=reply_id
+        )
+
+    async def cmd_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.effective_user
+        if not user:
+            return
+        user_id = str(user.id)
+        session_id = self.session_manager.get_session_id("telegram", user_id)
+        
+        task = self._session_tasks.pop(session_id, None)
+        interrupted = False
+        if task and not task.done():
+            task.cancel()
+            interrupted = True
+            
+        interrupt_event = self._active_sessions.pop(session_id, None)
+        if interrupt_event:
+            interrupt_event.set()
+            interrupted = True
+            
+        self.session_manager.set_busy(session_id, False)
+        
+        # Clear pending queue
+        queue = self._pending.pop(session_id, None)
+        
+        reply_id = update.effective_message.message_id if self._config.telegram_reply_to_message else None
+        if interrupted or queue:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="🛑 Active task and pending messages stopped.",
+                reply_to_message_id=reply_id
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="No active task running.",
+                reply_to_message_id=reply_id
+            )
+
+    async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.effective_user
+        if not user:
+            return
+        user_id = str(user.id)
+        session_id = self.session_manager.get_session_id("telegram", user_id)
+        
+        status_msg = (
+            f"📋 *MetaOps Session Status*\n\n"
+            f"👤 *User*: {user.first_name} (ID: `{user_id}`)\n"
+            f"🔑 *Role*: `{self.default_role}`\n"
+            f"🆔 *Session ID*: `{session_id}`\n\n"
+            f"⚙️ *Configuration*:\n"
+            f"• Coordinator: `{self._config.coordinator.provider}` / `{self._config.coordinator.model}`\n"
+            f"• Workstream: `{self._config.workstream.provider}` / `{self._config.workstream.model}`\n"
+            f"• Auditor: `{self._config.auditor.provider}` / `{self._config.auditor.model}`\n"
+            f"• Portkey Gateway: `{'Active' if os.getenv('PORTKEY_GATEWAY_URL') else 'Disabled'}`\n"
+        )
+        
+        reply_id = update.effective_message.message_id if self._config.telegram_reply_to_message else None
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=status_msg,
+            parse_mode="Markdown",
+            reply_to_message_id=reply_id
+        )
+
+    async def cmd_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.effective_user
+        if not user:
+            return
+        user_id = str(user.id)
+        
+        args = context.args
+        reply_id = update.effective_message.message_id if self._config.telegram_reply_to_message else None
+        if not args:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="⚠️ Please specify the session name. Example: `/resume session_name`",
+                parse_mode="Markdown",
+                reply_to_message_id=reply_id
+            )
+            return
+            
+        target_session = args[0]
+        key = f"telegram:{user_id}"
+        self.session_manager._user_to_session[key] = target_session
+        
+        await self._ensure_session(user_id, target_session, user.first_name or user_id)
+        
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"🔄 Switched/resumed session to: `{target_session}`",
+            parse_mode="Markdown",
+            reply_to_message_id=reply_id
+        )
+
     async def handle_channel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = update.effective_message
         if not message or not message.text:
@@ -202,6 +368,16 @@ class TelegramBridge(BaseGateway):
             await self.cmd_start(update, context)
         elif cmd == "/clear":
             await self.cmd_clear(update, context)
+        elif cmd == "/help":
+            await self.cmd_help(update, context)
+        elif cmd == "/new":
+            await self.cmd_new(update, context)
+        elif cmd == "/stop":
+            await self.cmd_stop(update, context)
+        elif cmd == "/status":
+            await self.cmd_status(update, context)
+        elif cmd == "/resume":
+            await self.cmd_resume(update, context)
 
     async def _ensure_session(self, user_id: str, session_id: str, user_name: str):
         if self._session_service and session_id not in self._initialized_sessions:

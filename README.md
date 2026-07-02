@@ -7,14 +7,16 @@ Enterprise-grade autonomous AI agent built on [Google ADK 2.3.0](https://google.
 ## Features
 
 - **Multi-provider LLM** — 30 providers supported (OpenRouter, OpenAI, Anthropic, Gemini, DeepSeek, Groq, Mistral, xAI, Ollama, LM Studio, and more). Each agent profile can use a different provider and model.
-- **Persistent memory** — SQLite for sessions, ChromaDB for vector memory (episodic, semantic, procedural, persona). Past conversations are automatically recalled via `preload_memory`.
+- **Dynamic Timeout & Automatic Failover** — Prevent blocking timeouts on slow or congested models. Configurable timeout via `METAOPS_LLM_TIMEOUT`, with automatic, transparent fallback to secondary providers defined in `METAOPS_FALLBACK_PROVIDERS` if the primary fails.
+- **Hierarchical Subagents** — Structured delegation of complex tasks (such as web research) from the Coordinator to specialized subagents (like `research_agent`) using ADK's native `AgentTool` pattern.
+- **Persistent memory** — SQLite for sessions, ChromaDB for vector memory (episodic, semantic, procedural, persona). Past conversations are automatically recalled via `preload_memory`. Fully compatible with Jina embeddings out-of-the-box.
 - **Skill system** — The agent learns reusable procedures during conversations and executes them on demand.
 - **Vibe coding workflow** — Coder agent → reviewer agent → correction loop (up to 3 revisions). Automatic code review on every generation.
 - **Full dev cycle** — Architect produces an implementation plan, coder implements it with review loop, optional test runner.
 - **Deep web research** — Parallel web search + extraction + crawling via Tavily, synthesized into a structured report.
 - **Multi-server MCP** — Configure multiple MCP servers (SSE, stdio, streamable HTTP) via `mcp_servers.json`.
 - **Background audit** — Scheduled deep scan: bandit (security), pip-audit (CVEs), code quality patterns, dependency review.
-- **Telegram gateway** — `/start`, `/clear`, per-user sessions, message chunking.
+- **Telegram gateway** — `/start`, `/clear`, `/new`, `/status`, `/stop`, `/resume <session_id>`, per-user sessions, message chunking.
 - **CLI gateway** — Interactive prompt with history.
 - **Cron scheduler** — APScheduler for unattended background tasks.
 - **Strict contract** — Every response starts with `[STATUS: OK|BLOCKED|PENDING]`. Think before act. Source every claim. Surgical scope.
@@ -30,6 +32,10 @@ MetaOps/
 ├── pyproject.toml               # Package metadata, dependencies, `metaops` CLI entry point
 ├── mcp_servers.json(.example)   # MCP server definitions consumed by tools/mcp_loader.py
 ├── .env(.example)               # Provider keys, per-agent model routing, roles, paths
+├── SOURCE/                      # System documentation and SQL schemas
+│   ├── schemasql_PORTKEY.md      # SQL schema for local Portkey Gateway log tables
+│   ├── schemasql_SUBAGENT.md     # SQL schema for hierarchical subagent log tables
+│   └── ROADMAP01.md              # Database consolidation and migration roadmap
 │
 └── src/metaops/
     ├── main.py                  # argparse CLI entry point — wires services, picks CLI vs Telegram gateway
@@ -39,7 +45,7 @@ MetaOps/
     │   └── local.py               # LocalTerminalBackend — streams shell output, bounded timeout/output size
     │
     ├── core/
-    │   ├── root.py                 # Builds the coordinator Agent + Runner (system prompt, tools, services)
+    │   ├── root.py                 # Builds the coordinator Agent + Runner (system prompt, tools, subagents, services)
     │   ├── callbacks.py             # Memory auto-injection, skill harvesting, tool/model error callbacks
     │   ├── background.py            # Audit workflow tools (bandit, pip-audit, source pattern scan)
     │   └── local_llm_driver.py      # OpenAILlm hardened for local backends (Ollama/LM Studio) — recovers missing tool_call id/name
@@ -97,7 +103,7 @@ MetaOps/
 | `gateway/delivery.py` | `DeliveryService` — sends a message to a delivery target string (`"cli"` or `"telegram:<chat_id>"`), used by the cron scheduler to report results. |
 | `gateway/registry.py` | `GatewayRegistry` — tiny registry of which gateway instances exist and whether each is currently active. |
 | `gateway/session_manager.py` | Maps `user_id` → stable `session_id` per platform, and tracks which sessions are mid-turn ("busy") to avoid concurrent runs. |
-| `memory/database.py` | `MemoryDatabase` — SQLite table of learned skills (`name`, `trigger_pattern`, `procedure`). |
+| `memory/database.py` | `MemoryDatabase` — SQLite store for learned procedural skills, Portkey logs, and subagent logs. |
 | `memory/embeddings.py` | `MetaOpsEmbeddingFunction` — ChromaDB embedding function, either local ONNX (no key) or an OpenAI-compatible API. |
 | `memory/vector_service.py` | `HybridVectorMemoryService` — four ChromaDB collections (episodic, semantic, procedural, persona) implementing ADK's `BaseMemoryService`. |
 | `scheduler/cron.py` | `MetaOpsCronScheduler` — wraps APScheduler; runs a prompt unattended on a cron expression and forwards the final text via a delivery callback. |
@@ -265,6 +271,23 @@ metaops gateway telegram
 
 * `--no-cron` — Disable the background cron job scheduler.
 * `--debug` — Enable verbose debugging logs (silenced by default for a clean prompt).
+
+---
+
+## Observability, Traceability & Persistence
+
+MetaOps consolidates all sessions, event histories, learned procedural skills, and observability traces into a single, unified SQLite database file located at `.data/metaops.db`.
+
+This database operates in **WAL (Write-Ahead Logging)** mode to handle concurrent reads and writes from multiple agent components, gateways, and hooks without locks.
+
+### Observability Tables
+
+1. **`portkey_logs`**: Logs details of every single LLM interaction routed via Portkey Gateway or other providers.
+   * *Tracks*: Latency (ms), token counts (prompt, completion, total), model version, provider name, raw prompt query, completion text, and detailed error messages on API failure.
+2. **`subagent_logs`**: Traces the execution of hierarchical subagents (e.g. `research_agent` delegated by `metaops_coordinator`).
+   * *Tracks*: Parent session ID, parent agent name, subagent name, query prompt, final returned response, token counts, and completion status.
+
+This complete traceability ensures that the agent never loses context, and all interactions are completely auditable and stored securely for long-term memory retrieval.
 
 ---
 

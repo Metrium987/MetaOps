@@ -280,7 +280,7 @@ async def _close_mcp_toolsets(runner) -> None:
         return
     from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 
-    for tool in runner.agent.tools:
+    for tool in runner.app.root_agent.tools:
         if isinstance(tool, McpToolset):
             try:
                 await tool.close()

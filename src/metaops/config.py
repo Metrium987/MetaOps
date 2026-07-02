@@ -295,7 +295,6 @@ class ModelConfig:
         )
         _cfg_logger.info("Native Gemini driver: model=%s (retry: 3 attempts)", model)
         return Gemini(model=model, retry_options=retry_opts)
-
     def _build_litellm(self):
         """Build LiteLLM driver for all OpenAI-compatible providers.
 
@@ -306,16 +305,14 @@ class ModelConfig:
         """
         from google.adk.models import LiteLlm
         model = self.model
-        # For OpenAI-compatible providers (KiloCode, OpenCode, OpenRouter, etc.),
-        # route through openai/ prefix so LiteLLM sends to the correct base_url.
-        # The model name after openai/ is passed AS-IS to the API — never strip
-        # vendor prefixes like nvidia/, stepfun/, etc.
+
         if self.provider in _OPENAI_COMPATIBLE_PROVIDERS and not model.startswith("openai/"):
             model = f"openai/{model}"
         kwargs = {}
+
         if self.api_key:
             kwargs["api_key"] = self.api_key
-            
+
         portkey_url = os.getenv("PORTKEY_GATEWAY_URL")
         if portkey_url:
             _cfg_logger.info("Routing provider=%s through Portkey AI Gateway at %s", self.provider, portkey_url)
@@ -324,14 +321,13 @@ class ModelConfig:
                 extra_headers["x-portkey-provider"] = "openai"
             else:
                 extra_headers["x-portkey-provider"] = self.provider
-            
+
             if self.base_url:
                 extra_headers["x-portkey-custom-host"] = self.base_url
-                
-            # Tag the request with the agent's role for Portkey observability
+
             metadata = {"role": self.role_name}
             extra_headers["x-portkey-metadata"] = json.dumps(metadata)
-                
+
             kwargs["extra_headers"] = extra_headers
             kwargs["api_base"] = portkey_url
         elif self.base_url:
@@ -382,6 +378,9 @@ class MetaOpsConfig:
         self.coordinator  = ModelConfig("METAOPS_COORDINATOR_MODEL",  "METAOPS_COORDINATOR_PROVIDER",  "openai/gpt-4o")
         self.workstream   = ModelConfig("METAOPS_WORKSTREAM_MODEL",   "METAOPS_WORKSTREAM_PROVIDER",   "openai/gpt-4o-mini")
         self.auditor      = ModelConfig("METAOPS_AUDITOR_MODEL",      "METAOPS_AUDITOR_PROVIDER",      "openai/gpt-4o-mini")
+        self.thinker      = ModelConfig("METAOPS_THINKER_MODEL",      "METAOPS_THINKER_PROVIDER",      "openai/gpt-4o")
+        self.coder        = ModelConfig("METAOPS_CODER_MODEL",        "METAOPS_CODER_PROVIDER",        "openai/gpt-4o-mini")
+        self.research     = ModelConfig("METAOPS_RESEARCH_MODEL",     "METAOPS_RESEARCH_PROVIDER",     "openai/gpt-4o-mini")
 
         # Database paths
         _project_root = Path(__file__).resolve().parent.parent.parent
@@ -394,8 +393,9 @@ class MetaOpsConfig:
                 p = _project_root / p
             return str(p)
 
-        self.sessions_db: str  = _resolve_db_path("METAOPS_SESSIONS_DB",  "metaops_sessions.db")
-        self.skills_db: str    = _resolve_db_path("METAOPS_SKILLS_DB",    "metaops_skills.db")
+        self.database_path: str = _resolve_db_path("METAOPS_DATABASE", "metaops.db")
+        self.sessions_db: str = self.database_path
+        self.skills_db: str = self.database_path
         self.vector_db: str    = _resolve_db_path("METAOPS_VECTOR_DB",    "metaops_vector_db")
 
         # Embeddings
@@ -408,7 +408,7 @@ class MetaOpsConfig:
         # ── Runtime tunables (all overridable via .env) ──────────────────
 
         # BuiltInPlanner thinking budget for Gemini/Anthropic (tokens)
-        self.thinking_budget: int = int(os.getenv("METAOPS_THINKING_BUDGET", "2048"))
+        self.thinking_budget: int = int(os.getenv("METAOPS_THINKING_BUDGET", "-1"))
 
         # Context compaction
         self.compact_interval: int = int(os.getenv("METAOPS_COMPACT_INTERVAL", "20"))
@@ -446,6 +446,52 @@ class MetaOpsConfig:
         # Audit limits
         self.audit_max_files: int = int(os.getenv("METAOPS_AUDIT_MAX_FILES", "150"))
         self.audit_file_max_lines: int = int(os.getenv("METAOPS_AUDIT_FILE_MAX_LINES", "8000"))
+
+    def get_fallback_configs(self) -> list["ModelConfig"]:
+        """Parse METAOPS_FALLBACK_PROVIDERS and return a list of fallback ModelConfigs.
+
+        Format: "provider:model,provider:model,..."
+        Example: "groq:llama-3.3-70b-versatile,openrouter:openai/gpt-4o-mini"
+
+        Returns an empty list if the env var is not set or empty.
+        """
+        raw = os.getenv("METAOPS_FALLBACK_PROVIDERS", "").strip()
+        if not raw:
+            return []
+
+        fallbacks: list[ModelConfig] = []
+        for entry in raw.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            if ":" in entry:
+                provider, model = entry.split(":", 1)
+            else:
+                # Bare model name → use the coordinator's provider
+                provider = self.coordinator.provider
+                model = entry
+            try:
+                fb = ModelConfig(
+                    model_env="__FALLBACK__",
+                    provider_env="__FALLBACK__",
+                    default_model=model,
+                    default_provider=provider,
+                    role_name="fallback",
+                )
+                # Override with explicit values since __FALLBACK__ won't resolve from env
+                fb.model = model
+                fb.provider = provider
+                fb.api_key, fb.base_url = resolve_provider(provider)
+                if fb.api_key:
+                    fallbacks.append(fb)
+                else:
+                    _cfg_logger.warning(
+                        "Fallback provider '%s' skipped — no API key found", provider,
+                    )
+            except Exception as exc:
+                _cfg_logger.warning("Fallback entry '%s' skipped: %s", entry, exc)
+
+        return fallbacks
 
     def validate_keys(self) -> bool:
         if not self.coordinator.api_key:

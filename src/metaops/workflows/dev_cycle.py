@@ -3,13 +3,15 @@
 Three-stage pipeline:
   Stage 1: Architect agent produces a step-by-step implementation plan
   Stage 2: vibe_code implements the plan with automatic review loop
-  Stage 3: (Optional) Run tests and report results
+  Stage 3: (Optional) Run tests and audit in parallel using ParallelAgent
 
 Exposed as FunctionTool for the coordinator agent.
 """
 
 import logging
-from google.adk.agents import Agent
+from google.adk.agents import Agent, BaseAgent, ParallelAgent, SequentialAgent
+from google.adk.agents.invocation_context import InvocationContext
+from google.adk.events import Event
 from google.adk.tools import FunctionTool, ToolContext
 from metaops.config import get_config
 from metaops.tools._shell_guard import check_command_allowed
@@ -42,6 +44,43 @@ _planner_agent = Agent(
     model=config.coordinator.to_model(),
     instruction=_PLANNER_INSTRUCTION,
 )
+
+
+# ---------------------------------------------------------------------------
+# Wrapper agents for parallel test + audit execution (ParallelAgent pattern)
+# ---------------------------------------------------------------------------
+
+class _ShellExecutorAgent(BaseAgent):
+    """Non-LLM agent that executes a shell command and stores output in state."""
+
+    def __init__(self, name: str, command: str):
+        super().__init__(name=name)
+        self._command = command
+
+    async def _run_async_impl(self, ctx: InvocationContext):
+        from metaops.backends.local import LocalTerminalBackend
+        backend = LocalTerminalBackend()
+        chunks: list[str] = []
+        async for chunk in backend.execute_stream(self._command):
+            chunks.append(chunk)
+        output = "".join(chunks)[-4000:]
+        ctx.session.state[f"{self.name}_output"] = output
+        yield Event(author=self.name, content={"parts": [{"text": output}]})
+
+
+class _AuditExecutorAgent(BaseAgent):
+    """Non-LLM agent that runs code audit and stores output in state."""
+
+    def __init__(self, name: str, scope: str = "quality"):
+        super().__init__(name=name)
+        self._scope = scope
+
+    async def _run_async_impl(self, ctx: InvocationContext):
+        from metaops.core.background import run_audit
+        result = await run_audit(scope=self._scope)
+        report = result.get("report", "")
+        ctx.session.state[f"{self.name}_output"] = report
+        yield Event(author=self.name, content={"parts": [{"text": report}]})
 
 
 async def _run_shell(command: str) -> str:
@@ -125,13 +164,51 @@ async def full_dev_cycle(
     if "last_review_feedback" in code_result:
         result["last_review_feedback"] = code_result["last_review_feedback"]
 
-    # Stage 3: Tests (optional)
+    # Stage 3: Tests & Audit (optional, run concurrently via ParallelAgent)
     if run_tests:
-        logger.info("Running tests: %s", test_command)
-        test_output = await _run_shell(test_command)
+        logger.info("Running tests and code audit concurrently via ParallelAgent...")
+
+        test_agent = _ShellExecutorAgent(name="test_runner", command=test_command)
+        audit_agent = _AuditExecutorAgent(name="audit_runner", scope="quality")
+
+        parallel_pipeline = ParallelAgent(
+            name="test_audit_parallel",
+            sub_agents=[test_agent, audit_agent],
+        )
+
+        import uuid
+        from google.adk.runners import Runner
+        from google.adk.sessions import InMemorySessionService
+        from google.adk.artifacts import InMemoryArtifactService
+        from google.genai import types
+
+        runner = Runner(
+            agent=parallel_pipeline,
+            app_name="dev_cycle_parallel",
+            session_service=InMemorySessionService(),
+            artifact_service=InMemoryArtifactService(),
+        )
+        session = await runner.session_service.create_session(
+            app_name="dev_cycle_parallel",
+            user_id="dev_cycle",
+            session_id=str(uuid.uuid4()),
+        )
+        async for _event in runner.run_async(
+            user_id="dev_cycle",
+            session_id=session.id,
+            new_message=types.Content(parts=[types.Part(text="Run tests and audit in parallel.")]),
+        ):
+            pass
+
+        final_session = await runner.session_service.get_session(
+            app_name="dev_cycle_parallel", user_id="dev_cycle", session_id=session.id
+        )
+        test_output = final_session.state.get("test_runner_output", "") if final_session else ""
+        audit_report = final_session.state.get("audit_runner_output", "") if final_session else ""
+
         result["test_output"] = test_output
-        # Heuristic: look for pytest/unittest summary patterns rather than
-        # substring matching on "passed"/"error" which can be unreliable.
+        result["audit_report"] = audit_report
+
         lower = test_output.lower()
         passed = "passed" in lower or "ok" in lower
         failed = "failed" in lower or "errors" in lower or "error" == lower.strip()

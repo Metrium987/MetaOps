@@ -20,6 +20,8 @@ from metaops.workflows.vibe_coding import vibe_coding_tool
 from metaops.workflows.research import deep_research_tool
 from metaops.workflows.dev_cycle import full_dev_cycle_tool
 from metaops.workflows.thinker import thinker_tool
+from metaops.workflows.reasoning_agents import REASONING_TOOLS
+from metaops.tools.loop_monitor import loop_monitor_tools
 from metaops.core.background import audit_tool
 from metaops.tools.web_search import (
     web_search_tool,
@@ -30,11 +32,7 @@ from metaops.tools.web_search import (
 )
 from metaops.core.callbacks import (
     auto_inject_memory_callback,
-    combined_after_agent_callback,
-    before_tool_callback,
-    after_tool_callback,
-    on_model_error_callback,
-    on_tool_error_callback,
+    MetaOpsPlugin,
     init_callbacks,
 )
 from metaops.tools.skill_executor import skill_executor_tool
@@ -70,6 +68,18 @@ artifact_service = FileArtifactService(root_dir=str(_artifacts_path))
 init_rag_tools(memory_service)
 init_callbacks(memory_service)
 init_memory_tools(memory_service)
+
+# Initialize SQLite tables at startup (creates tables if they don't exist)
+import asyncio
+from metaops.memory.database import initialize_db
+try:
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        loop.create_task(initialize_db())
+    else:
+        loop.run_until_complete(initialize_db())
+except RuntimeError:
+    asyncio.run(initialize_db())
 
 _STATIC_PROFILE = """You are MetaOps — an enterprise-grade autonomous agent with a persistent memory system, specialized workflows, and direct access to shell execution, web research, and code generation pipelines.
 
@@ -142,9 +152,19 @@ Execute Python directly       → code_executor (built-in, no tool call needed)
 Write code (with review)      → vibe_code ⚠️ REQUIRES WORKFLOW GATE
 Plan + code + optional tests  → full_dev_cycle ⚠️ REQUIRES WORKFLOW GATE
 Deep web research             → deep_research ⚠️ REQUIRES WORKFLOW GATE
-Quick web lookup              → web_search / web_extract / web_crawl / web_map
-Company intelligence          → company_info
+Web research & lookups        → research_agent (subagent specialist for search, extract, crawl, company info)
+Creative writing / naming     → creative_agent (subagent for copywriting, slogans, brainstorming)
 Hard decision / tradeoff      → thinker (pass full problem + all context)
+Best-of-N selection           → bon_judge (rate N candidates, pick the best)
+Deep structured reasoning     → cot_reflection (think → reflect → output)
+Majority vote consensus       → self_consistency (aggregate N independent answers)
+Critique & synthesize         → moa (3 candidates → critique → optimized synthesis)
+Autonomous code loop          → code_loop (code → test → review → repeat until approved)
+Autonomous research loop      → research_loop (research → critique → repeat until quality)
+Autonomous reasoning loop     → reasoning_loop (think → judge → repeat until solid)
+Check sub-agent status        → get_loop_status (see running/completed loops)
+Search past loops             → search_past_loops (find how similar tasks were solved)
+Loop statistics               → get_loop_stats (approval rate, avg iterations, tokens)
 Search past conversations     → recall_past_context (explicit query) — preload_memory runs automatically
 Load saved artifacts          → load_artifacts (images, PDFs, reports saved in this session)
 Index a file into memory      → ingest_file_dependency
@@ -188,6 +208,55 @@ def create_runner() -> Runner:
             )
         )
 
+    from google.adk.tools import agent_tool
+
+    # ── Research Subagent ──
+    # Delegated search assistant running under the Auditor/MiMo/OpenCode model config
+    research_agent = Agent(
+        name="research_agent",
+        description=(
+            "Web research specialist. Exposes tools to search the web, "
+            "extract text, crawl sites, map links, and query company info."
+        ),
+        model=config.research.to_model(),
+        instruction=(
+            "You are a dedicated web research assistant. Your role is to perform thorough "
+            "web searches, scrape web pages, crawl links, and compile accurate information. "
+            "Always synthesize your findings clearly and cite your source URLs."
+        ),
+        tools=[
+            web_search_tool,
+            web_extract_tool,
+            web_crawl_tool,
+            web_map_tool,
+            company_info_tool,
+        ],
+        before_model_callback=before_model_callback,
+        after_model_callback=after_model_callback,
+        on_model_error_callback=on_model_error_callback,
+        code_executor=UnsafeLocalCodeExecutor(),
+    )
+    research_subagent_tool = agent_tool.AgentTool(agent=research_agent)
+
+    # ── Creative Subagent ──
+    # Dedicated creative writing, naming, brainstorming specialist
+    creative_agent = Agent(
+        name="creative_agent",
+        description=(
+            "Creative specialist for writing, naming, brainstorming, copywriting, "
+            "slogans, taglines, marketing copy, and creative problem-solving. "
+            "Delegates to this agent when the task requires imagination, style, or flair."
+        ),
+        model=config.workstream.to_model(),
+        instruction=(
+            "You are a creative writing specialist. Your strengths: copywriting, naming, "
+            "brainstorming, storytelling, marketing copy, slogans, taglines, and creative "
+            "problem-solving. Generate multiple options (3-5 variations) for any creative "
+            "request. Be original, vivid, and memorable. Adapt tone to the audience."
+        ),
+    )
+    creative_subagent_tool = agent_tool.AgentTool(agent=creative_agent)
+
     metaops_root = Agent(
         name="metaops_coordinator",
         description=(
@@ -208,15 +277,15 @@ def create_runner() -> Runner:
             full_dev_cycle_tool,
             # Research
             deep_research_tool,
-            web_search_tool,
-            web_extract_tool,
-            web_crawl_tool,
-            web_map_tool,
-            company_info_tool,
+            research_subagent_tool,
+            # Creative
+            creative_subagent_tool,
             # Reasoning, audit & fact-checking
             thinker_tool,
             audit_tool,
             fact_check_tool,
+            # Reasoning strategies (extracted from OptiLLM)
+            *REASONING_TOOLS,
             # Memory, artifacts & skills
             preload_memory,
             load_artifacts,
@@ -228,15 +297,12 @@ def create_runner() -> Runner:
             skill_approve_tool,
             skill_reject_tool,
             skill_discover_tool,
+            # Loop monitoring
+            *loop_monitor_tools,
             # MCP servers
             *mcp_toolsets,
         ],
         before_agent_callback=auto_inject_memory_callback,
-        after_agent_callback=combined_after_agent_callback,
-        before_tool_callback=before_tool_callback,
-        after_tool_callback=after_tool_callback,
-        on_model_error_callback=on_model_error_callback,
-        on_tool_error_callback=on_tool_error_callback,
         code_executor=UnsafeLocalCodeExecutor(),
     )
 
@@ -258,6 +324,7 @@ def create_runner() -> Runner:
         session_service=session_service,
         memory_service=memory_service,
         artifact_service=artifact_service,
+        plugins=[MetaOpsPlugin(memory_service=memory_service)],
     )
 
 

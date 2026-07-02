@@ -12,7 +12,7 @@ from google.adk.models import LlmResponse
 from google.adk.tools import AgentTool
 from google.genai import types
 from metaops.config import get_config
-from metaops.tools.web_search import web_search_tool
+from metaops.tools.web_search import web_search_tool, web_extract_tool
 
 config = get_config()
 
@@ -165,7 +165,7 @@ critic_agent = Agent(
     description="Extracts factual claims from an answer and verifies each via web search. Returns verdicts per claim with sources.",
     model=config.coordinator.to_model(),
     instruction=CRITIC_PROMPT,
-    tools=[web_search_tool],
+    tools=[web_search_tool, web_extract_tool],
     after_model_callback=_render_references_from_search,
 )
 

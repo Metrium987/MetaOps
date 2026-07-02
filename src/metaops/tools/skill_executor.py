@@ -2,12 +2,12 @@ import shlex
 import logging
 from google.adk.tools import FunctionTool, ToolContext
 from metaops.backends.local import LocalTerminalBackend
-from metaops.memory.database import MemoryDatabase
+from metaops.memory.database import get_db_singleton
 from metaops.tools._shell_guard import check_command_allowed
 
 logger = logging.getLogger(__name__)
 
-_db = MemoryDatabase()
+_db = get_db_singleton()
 _backend = LocalTerminalBackend()
 
 async def execute_skill(skill_name: str, arguments: str = "", tool_context: ToolContext = None) -> dict:

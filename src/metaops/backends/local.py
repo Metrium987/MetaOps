@@ -52,7 +52,7 @@ class LocalTerminalBackend:
             stderr=asyncio.subprocess.STDOUT,
             executable=self.executable,
         )
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         bytes_yielded = 0
         try:

@@ -4,12 +4,12 @@ from typing import Optional, List, Dict, Any
 from google.adk.tools import FunctionTool, ToolContext
 from google.genai import types
 from metaops.memory.vector_service import HybridVectorMemoryService
-from metaops.memory.database import MemoryDatabase
+from metaops.memory.database import get_db_singleton
 
 logger = logging.getLogger(__name__)
 
 _memory_service: HybridVectorMemoryService = None
-_skill_db = MemoryDatabase()
+_skill_db = get_db_singleton()
 
 
 def init_memory_tools(memory_service: HybridVectorMemoryService):

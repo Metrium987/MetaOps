@@ -102,7 +102,7 @@ Be concise. Cite sources inline. Skip sections that have no content."""
 
 researcher_agent = Agent(
     name="researcher",
-    model=config.workstream.to_model(),
+    model=config.research.to_model(),
     instruction=_RESEARCHER_INSTRUCTION,
     tools=[web_search_tool, web_extract_tool, web_crawl_tool, company_info_tool],
     output_key="raw_research",
@@ -110,7 +110,7 @@ researcher_agent = Agent(
 
 research_evaluator = Agent(
     name="research_evaluator",
-    model=config.workstream.to_model(),
+    model=config.research.to_model(),
     instruction=_EVALUATOR_INSTRUCTION,
     output_schema=ResearchFeedback,
     disallow_transfer_to_parent=True,
@@ -139,7 +139,7 @@ class EscalationChecker(BaseAgent):
 
 researcher_refiner = Agent(
     name="researcher_refiner",
-    model=config.workstream.to_model(),
+    model=config.research.to_model(),
     instruction=_REFINER_INSTRUCTION,
     tools=[web_search_tool, web_extract_tool],
     output_key="raw_research",

@@ -175,12 +175,18 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "metaops_vector_db").mkdir(parents=True, exist_ok=True)
 ok(f"{DATA_DIR} ready")
 
-# Create SQLite databases
+# Create unified SQLite database
 for db_name, schemas in [
-    ("metaops_sessions.db", []),
-    ("metaops_skills.db", [
+    ("metaops.db", [
+        "CREATE TABLE IF NOT EXISTS app_states (app_name TEXT PRIMARY KEY, state TEXT NOT NULL, update_time REAL NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS user_states (app_name TEXT NOT NULL, user_id TEXT NOT NULL, state TEXT NOT NULL, update_time REAL NOT NULL, PRIMARY KEY (app_name, user_id))",
+        "CREATE TABLE IF NOT EXISTS sessions (app_name TEXT NOT NULL, user_id TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, create_time REAL NOT NULL, update_time REAL NOT NULL, PRIMARY KEY (app_name, user_id, id))",
+        "CREATE TABLE IF NOT EXISTS events (id TEXT NOT NULL, app_name TEXT NOT NULL, user_id TEXT NOT NULL, session_id TEXT NOT NULL, invocation_id TEXT NOT NULL, timestamp REAL NOT NULL, event_data TEXT NOT NULL, PRIMARY KEY (app_name, user_id, session_id, id), FOREIGN KEY (app_name, user_id, session_id) REFERENCES sessions(app_name, user_id, id) ON DELETE CASCADE)",
         "CREATE TABLE IF NOT EXISTS skills (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, description TEXT NOT NULL, instructions TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending_review', version INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)",
         "CREATE TABLE IF NOT EXISTS skill_resources (id INTEGER PRIMARY KEY AUTOINCREMENT, skill_name TEXT NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL, FOREIGN KEY (skill_name) REFERENCES skills(name) ON DELETE CASCADE, UNIQUE(skill_name, path))",
+        "CREATE TABLE IF NOT EXISTS rag_sources (file_path TEXT PRIMARY KEY, filename TEXT NOT NULL, description TEXT, global_context TEXT, file_size INTEGER NOT NULL, chunk_count INTEGER NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE TABLE IF NOT EXISTS portkey_logs (id TEXT PRIMARY KEY, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, session_id TEXT, role TEXT, provider TEXT NOT NULL, model TEXT NOT NULL, prompt TEXT, completion TEXT, prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER, cost REAL, latency_ms INTEGER, status_code INTEGER, error_message TEXT)",
+        "CREATE TABLE IF NOT EXISTS subagent_logs (id TEXT PRIMARY KEY, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, session_id TEXT, parent_agent TEXT NOT NULL, subagent_name TEXT NOT NULL, query TEXT, response TEXT, prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER, latency_ms INTEGER, status TEXT)",
     ]),
 ]:
     db_path = DATA_DIR / db_name

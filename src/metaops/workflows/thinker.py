@@ -1,6 +1,8 @@
 from google.adk.agents import Agent
+from google.adk.code_executors import UnsafeLocalCodeExecutor
 from google.adk.tools import AgentTool
 from metaops.config import get_config
+from metaops.tools.web_search import web_search_tool, web_extract_tool
 
 config = get_config()
 
@@ -34,11 +36,13 @@ thinker_agent = Agent(
     name="thinker",
     description=(
         "Deep reasoning agent for hard decisions, architecture choices, bug root-cause analysis, "
-        "and tradeoff evaluation. Pass the full problem statement and all relevant context "
-        "(code snippets, error messages, constraints). Returns a structured analysis and recommendation."
+        "and tradeoff evaluation. Can research via web search and execute code for calculations. "
+        "Pass the full problem statement and all relevant context."
     ),
-    model=config.coordinator.to_model(),
+    model=config.thinker.to_model(),
     instruction=_THINKER_INSTRUCTION,
+    tools=[web_search_tool, web_extract_tool],
+    code_executor=UnsafeLocalCodeExecutor(),
 )
 
 thinker_tool = AgentTool(agent=thinker_agent)

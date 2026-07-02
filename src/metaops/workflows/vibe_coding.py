@@ -10,7 +10,10 @@ Exposed as FunctionTool for the coordinator agent.
 """
 
 import logging
+import re
+from pathlib import Path
 from google.adk.agents import Agent
+from google.adk.code_executors import UnsafeLocalCodeExecutor
 from google.adk.tools import FunctionTool, ToolContext
 from metaops.config import get_config
 from metaops.workflows.agent_runner import run_agent_once
@@ -23,33 +26,119 @@ config = get_config()
 def _get_max_revisions() -> int:
     return config.max_revisions
 
+
+# ---------------------------------------------------------------------------
+# SEARCH/REPLACE diff utilities
+# ---------------------------------------------------------------------------
+
+_SEARCH_REPLACE_PATTERN = re.compile(
+    r"<<<<<<< SEARCH\n(.*?)\n=======\n(.*?)\n>>>>>>> REPLACE",
+    re.DOTALL,
+)
+
+
+def apply_search_replace_diffs(text: str) -> list[dict]:
+    """Parse SEARCH/REPLACE diff blocks from agent output.
+
+    Returns list of dicts with 'search' and 'replace' keys.
+    """
+    diffs = []
+    for match in _SEARCH_REPLACE_PATTERN.finditer(text):
+        diffs.append({
+            "search": match.group(1),
+            "replace": match.group(2),
+        })
+    return diffs
+
+
+def apply_diffs_to_file(file_path: str, diffs: list[dict]) -> tuple[bool, str]:
+    """Apply SEARCH/REPLACE diffs to a file. Returns (success, message)."""
+    try:
+        path = Path(file_path)
+        if not path.exists():
+            return False, f"File not found: {file_path}"
+
+        content = path.read_text(encoding="utf-8")
+        original = content
+
+        for i, d in enumerate(diffs):
+            search = d["search"]
+            replace = d["replace"]
+            if search in content:
+                content = content.replace(search, replace, 1)
+                logger.info("Applied diff %d to %s", i + 1, file_path)
+            else:
+                logger.warning("Diff %d search block not found in %s", i + 1, file_path)
+
+        if content != original:
+            path.write_text(content, encoding="utf-8")
+            return True, f"Applied {len(diffs)} diff(s) to {file_path}"
+        return True, "No changes needed"
+
+    except Exception as e:
+        return False, f"Error applying diffs: {e}"
+
+
+def extract_code_blocks(text: str) -> list[dict]:
+    """Extract fenced code blocks from agent output.
+
+    Returns list of dicts with 'language' and 'code' keys.
+    """
+    pattern = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
+    blocks = []
+    for match in pattern.finditer(text):
+        lang = match.group(1) or "unknown"
+        code = match.group(2).strip()
+        if code:
+            blocks.append({"language": lang, "code": code})
+    return blocks
+
+
+def extract_diffs_and_code(text: str) -> dict:
+    """Extract both SEARCH/REPLACE diffs and code blocks from agent output.
+
+    Returns dict with 'diffs' and 'code_blocks' keys.
+    """
+    return {
+        "diffs": apply_search_replace_diffs(text),
+        "code_blocks": extract_code_blocks(text),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Agents
 # ---------------------------------------------------------------------------
 
-_CODER_INSTRUCTION = """You are an expert software engineer. Write correct, clean, production-ready code.
+_CODER_INSTRUCTION = """You are an expert SWE (Software Engineering) agent. Your goal is to write correct, minimal, clean, and production-ready code to resolve a specific issue.
 
-Rules:
-- Read the FULL prompt carefully before writing anything.
-- If reviewer feedback is included, fix EVERY issue listed. Start with:
-  "Addressing reviewer feedback:" then acknowledge each fix briefly.
-- Output format: wrap code in a fenced block with the language tag:
-  ```<language>
-  <your code>
-  ```
-  Then add a 1-paragraph explanation of what the code does.
-- Write COMPLETE, runnable code. No placeholders, no TODOs, no "..."."""
+Follow these strict rules:
+1. **Understand and Plan**: Analyze the task and reviewer feedback carefully. Before writing any code, list the exact files and lines of code you need to change.
+2. **Surgical Scope**: Modify ONLY the lines of code necessary to solve the issue. Do not rewrite unrelated blocks or change spacing/style outside the target block.
+3. **No Placeholders**: Write COMPLETE, runnable code. Never use TODOs, comments like "# rest of code...", or ellipses "...".
+4. **Addressing Feedback**: If reviewer feedback is provided, you must address EVERY point. Start your response with a brief section "Addressing Reviewer Feedback:" explaining what was corrected.
+5. **Output Format**: Use SEARCH/REPLACE diff format for editing existing files:
+   <<<<<<< SEARCH
+   <exact lines to find>
+   =======
+   <replacement lines>
+   >>>>>>> REPLACE
 
-_REVIEWER_INSTRUCTION = """You are a strict but fair code reviewer.
+   For new files, use standard fenced code blocks:
+   ```<language>
+   <your code>
+   ```
 
-Review the code against the original task requirements. Check:
-1. Correctness — does it do what was asked?
-2. Bugs — logic errors, off-by-one, unhandled edge cases
-3. Security — injections, unsafe evals, exposed secrets
-4. Completeness — is anything missing from the requirements?
+   Followed by a concise explanation of the design choices and how edge cases were handled."""
 
-If the code is correct and complete → approve it.
-If there are real issues → reject with a specific numbered list of problems.
+_REVIEWER_INSTRUCTION = """You are a strict, production-level code reviewer. Your job is to verify that the generated code is correct, secure, and ready to deploy.
+
+Critically analyze the code against the task requirements. You must check:
+1. **Correctness & Logic**: Does the code fully implement the requested logic? Are there off-by-one errors, boundary issues, or null/empty exceptions?
+2. **Surgical Precision**: Does the code limit modifications to the target scope? (Flag unnecessary code churn or rewrites of stable code).
+3. **Security & Reliability**: Check for common vulnerabilities (SQL injection, unsafe eval, path traversal, resource leaks).
+4. **Completeness**: Are there placeholders, TODOs, or missing imports?
+
+Provide constructive, detailed feedback for any issues found. If and only if the code has zero issues, approve it.
 
 You MUST end your response with EXACTLY one of:
 VERDICT: APPROVED
@@ -57,8 +146,9 @@ VERDICT: NEEDS_WORK"""
 
 coder_agent = Agent(
     name="coder_agent",
-    model=config.workstream.to_model(),
+    model=config.coder.to_model(),
     instruction=_CODER_INSTRUCTION,
+    code_executor=UnsafeLocalCodeExecutor(),
 )
 
 reviewer_agent = Agent(
